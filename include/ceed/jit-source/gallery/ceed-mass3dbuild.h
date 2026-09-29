@@ -13,14 +13,14 @@
 CEED_QFUNCTION(Mass3DBuild)(void *ctx, const CeedInt Q, const CeedScalar *const *in, CeedScalar *const *out) {
   // in[0] is Jacobians with shape [2, nc=3, Q]
   // in[1] is quadrature weights, size (Q)
-  const CeedScalar(*J)[3][CEED_Q_VLA] = (const CeedScalar(*)[3][CEED_Q_VLA])in[0], *w = in[1];
+  const CeedScalar *J = in[0], *w = in[1];
   // out[0] is quadrature data, size (Q)
   CeedScalar *q_data = out[0];
 
   // Quadrature point loop
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++) {
-    q_data[i] = (J[0][0][i] * (J[1][1][i] * J[2][2][i] - J[1][2][i] * J[2][1][i]) - J[0][1][i] * (J[1][0][i] * J[2][2][i] - J[1][2][i] * J[2][0][i]) +
-                 J[0][2][i] * (J[1][0][i] * J[2][1][i] - J[1][1][i] * J[2][0][i])) *
+    q_data[i] = (J[((0) * 2 + (0)) * Q + i] * (J[((1) * 2 + (1)) * Q + i] * J[((2) * 2 + (2)) * Q + i] - J[((1) * 2 + (2)) * Q + i] * J[((2) * 2 + (1)) * Q + i]) - J[((0) * 2 + (1)) * Q + i] * (J[((1) * 2 + (0)) * Q + i] * J[((2) * 2 + (2)) * Q + i] - J[((1) * 2 + (2)) * Q + i] * J[((2) * 2 + (0)) * Q + i]) +
+                 J[((0) * 2 + (2)) * Q + i] * (J[((1) * 2 + (0)) * Q + i] * J[((2) * 2 + (1)) * Q + i] - J[((1) * 2 + (1)) * Q + i] * J[((2) * 2 + (0)) * Q + i])) *
                 w[i];
   }  // End of Quadrature Point Loop
   return CEED_ERROR_SUCCESS;

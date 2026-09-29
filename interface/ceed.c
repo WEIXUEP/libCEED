@@ -17,6 +17,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
 
 /// @cond DOXYGEN_SKIP
 static CeedRequest ceed_request_immediate;
@@ -281,8 +284,13 @@ void CeedDebugImpl256(const unsigned char color, const char *format, ...) {
   @sa CeedFree()
 **/
 int CeedMallocArray(size_t n, size_t unit, void *p) {
+#if defined(_MSC_VER)
+  *(void **)p = _aligned_malloc(n * unit, CEED_ALIGN);
+  CeedCheck(!n || !unit || *(void **)p, NULL, CEED_ERROR_MAJOR, "_aligned_malloc failed to allocate %zu members of size %zu\n", n, unit);
+#else
   int ierr = posix_memalign((void **)p, CEED_ALIGN, n * unit);
   CeedCheck(ierr == 0, NULL, CEED_ERROR_MAJOR, "posix_memalign failed to allocate %zd members of size %zd\n", n, unit);
+#endif
   return CEED_ERROR_SUCCESS;
 }
 
@@ -302,7 +310,12 @@ int CeedMallocArray(size_t n, size_t unit, void *p) {
   @sa CeedFree()
 **/
 int CeedCallocArray(size_t n, size_t unit, void *p) {
+#if defined(_MSC_VER)
+  *(void **)p = _aligned_malloc(n * unit, CEED_ALIGN);
+  if (*(void **)p) memset(*(void **)p, 0, n * unit);
+#else
   *(void **)p = calloc(n, unit);
+#endif
   CeedCheck(!n || !unit || *(void **)p, NULL, CEED_ERROR_MAJOR, "calloc failed to allocate %zd members of size %zd\n", n, unit);
   return CEED_ERROR_SUCCESS;
 }
@@ -323,7 +336,11 @@ int CeedCallocArray(size_t n, size_t unit, void *p) {
   @sa CeedFree()
 **/
 int CeedReallocArray(size_t n, size_t unit, void *p) {
+#if defined(_MSC_VER)
+  *(void **)p = _aligned_realloc(*(void **)p, n * unit, CEED_ALIGN);
+#else
   *(void **)p = realloc(*(void **)p, n * unit);
+#endif
   CeedCheck(!n || !unit || *(void **)p, NULL, CEED_ERROR_MAJOR, "realloc failed to allocate %zd members of size %zd\n", n, unit);
   return CEED_ERROR_SUCCESS;
 }
@@ -360,7 +377,11 @@ int CeedStringAllocCopy(const char *source, char **copy) {
   @ref Backend
 **/
 int CeedFree(void *p) {
+#if defined(_MSC_VER)
+  _aligned_free(*(void **)p);
+#else
   free(*(void **)p);
+#endif
   *(void **)p = NULL;
   return CEED_ERROR_SUCCESS;
 }
@@ -1224,7 +1245,7 @@ int CeedInit(const char *resource, Ceed *ceed) {
       const char *prefix        = backends[i].prefix;
       size_t      prefix_length = strlen(backends[i].prefix);
       size_t      min_len       = (prefix_length < stem_length) ? prefix_length : stem_length;
-      size_t      column[min_len + 1];
+      size_t      column[CEED_MAX_RESOURCE_LEN + 1];
 
       for (size_t j = 0; j <= min_len; j++) column[j] = j;
       for (size_t j = 1; j <= min_len; j++) {

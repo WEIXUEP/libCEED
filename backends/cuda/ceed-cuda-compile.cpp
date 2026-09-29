@@ -7,12 +7,24 @@
 
 #include "ceed-cuda-compile.h"
 
+#ifdef _WIN32
+#include <direct.h>
+#include <process.h>
+#define popen _popen
+#define pclose _pclose
+#define mkdir(path, mode) _mkdir(path)
+#define setenv(name, value, overwrite) _putenv_s(name, value)
+#define chmod(path, mode) 0
+#endif
+
 #include <ceed.h>
 #include <ceed/backend.h>
 #include <ceed/jit-tools.h>
 #include <cuda_runtime.h>
-#include <dirent.h>
 #include <nvrtc.h>
+#ifndef _WIN32
+#include <dirent.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,6 +37,9 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#ifdef _WIN32
+#include <filesystem>
+#endif
 
 #include "ceed-cuda-common.h"
 
@@ -246,16 +261,21 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
 
     // Create temp dir if needed
     {
-      DIR *dir = opendir("temp");
-
-      if (dir) {
-        closedir(dir);
-      } else {
+#ifdef _WIN32
+      if (!std::filesystem::is_directory("temp")) {
         // In parallel multiple processes may attempt
         // Only one process needs to succeed
         mkdir("temp", 0777);
         chmod("temp", 0777);
       }
+#else
+      DIR *dir = opendir("temp");
+      if (dir) closedir(dir);
+      else {
+        mkdir("temp", 0777);
+        chmod("temp", 0777);
+      }
+#endif
     }
     // Write code to temp file
     {
@@ -401,23 +421,24 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
 
     // Searches for .a files in Rust directory
     // Note: Rust crate names may not match the folder they are in
-    // TODO: If libCEED switches to c++17, use std::filesystem here
+    // Search Rust output archives using the C++17 filesystem API.
     for (CeedInt i = 0; i < num_rust_source_dirs; i++) {
       std::string dir = rust_dirs[i] + "/target/nvptx64-nvidia-cuda/release";
-      DIR        *dp  = opendir(dir.c_str());
-
+#ifdef _WIN32
+      CeedCheck(std::filesystem::is_directory(dir), ceed, CEED_ERROR_BACKEND, "Could not open directory: %s", dir.c_str());
+      for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() == ".a") command += entry.path().string() + " ";
+      }
+#else
+      DIR *dp = opendir(dir.c_str());
       CeedCheck(dp != nullptr, ceed, CEED_ERROR_BACKEND, "Could not open directory: %s", dir.c_str());
       struct dirent *entry;
-
-      // Find files ending in .a
       while ((entry = readdir(dp)) != nullptr) {
         std::string filename(entry->d_name);
-
-        if (filename.size() >= 2 && filename.substr(filename.size() - 2) == ".a") {
-          command += dir + "/" + filename + " ";
-        }
+        if (filename.size() >= 2 && filename.substr(filename.size() - 2) == ".a") command += dir + "/" + filename + " ";
       }
       closedir(dp);
+#endif
     }
 
     // Link, optimize, and compile final CUDA kernel

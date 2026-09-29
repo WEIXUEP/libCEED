@@ -9,6 +9,29 @@
 # Configuration
 # ------------------------------------------------------------
 
+# Windows/MSVC defaults. Override any of these on the make command line.
+IS_MSVC ?= $(if $(or $(filter Windows_NT,$(OS)),$(filter MINGW% MSYS%,$(shell uname -s))),1,0)
+ifeq ($(IS_MSVC),1)
+prefix ?= K:/Project_WXP/git/libCEED/build_windows
+LDFLAGS ?= /machine:x64
+STATIC ?= 1
+else
+prefix ?= /usr/local
+LDFLAGS ?=
+STATIC ?=
+endif
+PEDANTIC ?=
+CMAKE_BUILD_TYPE_FLAG ?= MDd
+CUDA_ARCH ?= $(if $(filter 1,$(IS_MSVC)),sm_86,)
+CUDA_TARGETS ?=
+ifeq ($(IS_MSVC),1)
+  CC ?= D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/cl.exe
+  CXX ?= $(CC)
+  LINK ?= D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/link.exe
+  AR ?= D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/lib.exe
+  ARFLAGS ?= /NOLOGO /OUT:$@
+endif
+
 # config.mk stores cached configuration variables
 CONFIG ?= config.mk
 -include $(CONFIG)
@@ -31,9 +54,7 @@ quiet ?= $($(1))
 
 .PRECIOUS: %/.DIR
 
-
 DARWIN := $(filter Darwin,$(shell uname -s))
-
 
 # ------------------------------------------------------------
 # Root directories for backend dependencies
@@ -43,10 +64,8 @@ DARWIN := $(filter Darwin,$(shell uname -s))
 XSMM_DIR ?= ../libxsmm
 
 # Often /opt/cuda or /usr/local/cuda, but sometimes present on machines that don't support CUDA
-CUDA_DIR  ?=
-CUDA_ARCH ?=
-CUDA_TARGETS ?=
-
+CUDA_DIR  ?= $(CUDA_PATH)
+CUDA_DIR  := $(patsubst %;,%,$(CUDA_DIR))
 # Often /opt/rocm, but sometimes present on machines that don't support HIP
 ROCM_DIR ?=
 HIP_ARCH ?=
@@ -54,12 +73,38 @@ HIP_ARCH ?=
 # env variable MAGMA_DIR can be used too
 MAGMA_DIR ?= ../magma
 
-
 # ------------------------------------------------------------
 # Compiler flags
 # ------------------------------------------------------------
 
+ifeq ($(IS_MSVC),1)
+  export MSYS2_ARG_CONV_EXCL := *
+  native_path = $(shell cygpath -m $(1))
+else
+  native_path = $(1)
+endif
+
 # Detect user compiler options and set defaults
+ifeq ($(IS_MSVC),1)
+  ifeq (,$(filter-out undefined default,$(origin CC)))
+    CC = D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/cl.exe
+  endif
+  ifeq (,$(filter-out undefined default,$(origin CXX)))
+    CXX = $(CC)
+  endif
+  ifeq (,$(filter-out undefined default,$(origin LINK)))
+    LINK = D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/link.exe
+  endif
+  ifeq (,$(filter-out undefined default,$(origin AR)))
+    AR = D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/lib.exe
+  endif
+  ifeq (,$(filter-out undefined default,$(origin ARFLAGS)))
+    ARFLAGS = /NOLOGO /OUT:$@
+  endif
+  ifeq (,$(filter-out undefined default,$(origin FC)))
+    FC =
+  endif
+else
 ifeq (,$(filter-out undefined default,$(origin CC)))
   CC = gcc
 endif
@@ -78,9 +123,25 @@ endif
 ifeq (,$(filter-out undefined default,$(origin ARFLAGS)))
   ARFLAGS = $(if $(DARWIN),cr,crD)
 endif
+endif
+
+$(info Windows/MSVC build configuration:)
+$(info   IS_MSVC=$(IS_MSVC))
+$(info   prefix=$(prefix))
+$(info   LDFLAGS=$(LDFLAGS))
+$(info   STATIC=$(STATIC))
+$(info   PEDANTIC=$(PEDANTIC))
+$(info   CMAKE_BUILD_TYPE_FLAG=$(CMAKE_BUILD_TYPE_FLAG))
+$(info   CUDA_ARCH=$(CUDA_ARCH))
+$(info   CC=$(CC))
+$(info   CXX=$(CXX))
+$(info   LINK=$(LINK))
+$(info   AR=$(AR))
+$(info   ARFLAGS=$(ARFLAGS))
+
 # chipStar sets HIP_DIR instead of ROCM_DIR
 ROCM_DIR ?= ${HIP_DIR}
-NVCC ?= $(CUDA_DIR)/bin/nvcc
+NVCC ?= $(if $(filter 1,$(IS_MSVC)),"$(CUDA_DIR)/bin/nvcc",$(CUDA_DIR)/bin/nvcc)
 NVCC_CXX ?= $(CXX)
 HIPCC ?= $(ROCM_DIR)/bin/hipcc
 SYCLCXX ?= $(CXX)
@@ -100,6 +161,7 @@ ifneq ($(ROCM_DIR),)
     endif
   endif
 endif
+
 # ASAN must be left empty if you don't want to use it
 ASAN ?=
 
@@ -119,16 +181,19 @@ V ?= $(VERBOSE)
 AFLAGS ?= -fsanitize=address #-fsanitize=undefined -fno-omit-frame-pointer
 
 # Note: Intel oneAPI C/C++ compiler is now icx/icpx
+ifeq ($(IS_MSVC),1)
+CC_VENDOR := msvc
+FC_VENDOR :=
+else
 CC_VENDOR := $(firstword $(filter gcc (GCC) clang cc icc icc_orig oneAPI XL emcc,$(subst -, ,$(shell $(CC) --version))))
 CC_VENDOR := $(subst (GCC),gcc,$(subst icc_orig,icc,$(CC_VENDOR)))
 CC_VENDOR := $(if $(filter cc,$(CC_VENDOR)),gcc,$(CC_VENDOR))
 FC_VENDOR := $(if $(FC),$(firstword $(filter GNU ifort ifx XL,$(shell $(FC) --version 2>&1 || $(FC) -qversion))))
-
-# Host architecture for setting appropriate flags
-UNAME_M := $(shell uname -m)
+endif
 
 # Default extra flags by vendor
 # GCC: use -march=native only on x86 (where -mcpu doesn't exist); use -mcpu=native elsewhere
+UNAME_M := $(shell uname -m)
 MARCHFLAG.gcc           := $(if $(filter x86_64 i%86,$(UNAME_M)),-march=native,-mcpu=native)
 MARCHFLAG.clang         := $(MARCHFLAG.gcc)
 MARCHFLAG.icc           :=
@@ -156,12 +221,14 @@ CFLAGS.icc              := $(CFLAGS.gcc)
 CFLAGS.oneAPI           := $(CFLAGS.clang)
 CFLAGS.XL               := $(if $(STATIC),,-qpic) -MMD
 CFLAGS.emcc             := $(CFLAGS.clang)
+CFLAGS.msvc             := /nologo /std:c11 /MD /W3
 CXXFLAGS.gcc            := $(if $(STATIC),,-fPIC) -std=c++11 -Wall -Wextra -Wno-unused-parameter -MMD -MP
 CXXFLAGS.clang          := $(CXXFLAGS.gcc)
 CXXFLAGS.icc            := $(CXXFLAGS.gcc)
 CXXFLAGS.oneAPI         := $(CXXFLAGS.clang)
 CXXFLAGS.XL             := $(if $(STATIC),,-qpic) -std=c++11 -MMD
 CXXFLAGS.emcc           := $(CXXFLAGS.clang)
+CXXFLAGS.msvc           := /nologo /std:c++17 /MD /W3 /EHsc
 FFLAGS.GNU              := $(if $(STATIC),,-fPIC) -cpp -Wall -Wextra -Wno-unused-parameter -Wno-unused-dummy-argument -MMD -MP
 FFLAGS.ifort            := $(if $(STATIC),,-fPIC) -cpp
 FFLAGS.ifx              := $(FFLAGS.ifort)
@@ -170,10 +237,16 @@ FFLAGS.XL               := $(if $(STATIC),,-qpic) -ffree-form -qpreprocess -qext
 # This check works with compilers that use gcc and clang.  It fails with some
 # compilers; e.g., xlc apparently ignores all options when -E is passed, thus
 # succeeds with any flags.  Users can pass MARCHFLAG=... if desired.
+ifeq ($(IS_MSVC),1)
+cc_check_flag =
+else
 cc_check_flag = $(shell $(CC) -E -Werror $(1) -x c /dev/null > /dev/null 2>&1 && echo 1)
+endif
 MARCHFLAG := $(MARCHFLAG.$(CC_VENDOR))
+ifneq ($(IS_MSVC),1)
 MARCHFLAG := $(if $(call cc_check_flag,$(MARCHFLAG)),$(MARCHFLAG),-mcpu=native)
 MARCHFLAG := $(if $(call cc_check_flag,$(MARCHFLAG)),$(MARCHFLAG))
+endif
 
 OMP_SIMD_FLAG := $(OMP_SIMD_FLAG.$(CC_VENDOR))
 OMP_SIMD_FLAG := $(if $(call cc_check_flag,$(OMP_SIMD_FLAG)),$(OMP_SIMD_FLAG))
@@ -183,12 +256,16 @@ PEDANTIC      ?=
 PEDANTICFLAGS ?= -Werror -pedantic
 
 # Compiler flags
-OPT    ?= -O $(MARCHFLAG) $(OPT.$(CC_VENDOR)) $(OMP_SIMD_FLAG)
+ifeq ($(IS_MSVC),1)
+OPT ?= /O2
+else
+OPT ?= -O $(MARCHFLAG) $(OPT.$(CC_VENDOR)) $(OMP_SIMD_FLAG)
+endif
 CFLAGS ?= $(OPT) $(CFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
 CXXFLAGS ?= $(OPT) $(CXXFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
 FFLAGS ?= $(OPT) $(FFLAGS.$(FC_VENDOR))
-LIBCXX ?= -lstdc++
-NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' -Xcompiler -fPIC
+LIBCXX ?= $(if $(filter 1,$(IS_MSVC)),,-lstdc++)
+NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' $(if $(filter 1,$(IS_MSVC)),,-Xcompiler -fPIC)
 CUDA_TARGETS_UNKNOWN := $(filter-out sm_%,$(CUDA_TARGETS))
 CUDA_SMS := $(patsubst sm_%,%,$(filter sm_%,$(CUDA_TARGETS)))
 CUDA_SMS := $(shell printf "%s\n" $(CUDA_SMS) | sort -n)
@@ -200,7 +277,7 @@ ifneq ($(strip $(CUDA_TARGETS)),)
   endif
   NVCCFLAGS += $(foreach sm,$(CUDA_SMS),$(call cuda_gencode_sm,$(sm))) \
     $(call cuda_gencode_compute,$(lastword $(CUDA_SMS)))
-else ifneq ($(strip $(CUDA_ARCH)),)
+else ifneq ($(CUDA_ARCH),)
   NVCCFLAGS += -arch=$(CUDA_ARCH)
 endif
 HIPCCFLAGS ?= $(filter-out $(OMP_SIMD_FLAG),$(OPT)) -fPIC -munsafe-fp-atomics
@@ -224,11 +301,15 @@ ifeq ($(COVERAGE), 1)
   CEED_LDFLAGS += --coverage
 endif
 
+ifeq ($(IS_MSVC),1)
+  CEED_LDLIBS =
+else
+  CEED_LDLIBS = -lm
+endif
 CFLAGS += $(if $(ASAN),$(AFLAGS))
 FFLAGS += $(if $(ASAN),$(AFLAGS))
 CEED_LDFLAGS += $(if $(ASAN),$(AFLAGS))
 CPPFLAGS += -I./include
-CEED_LDLIBS = -lm
 OBJDIR := build
 for_install := $(filter install,$(MAKECMDGOALS))
 LIBDIR := $(if $(for_install),$(OBJDIR),lib)
@@ -244,7 +325,7 @@ INSTALL_PROGRAM = $(INSTALL)
 INSTALL_DATA = $(INSTALL) -m644
 
 # Get number of processors of the machine
-NPROCS := $(shell getconf _NPROCESSORS_ONLN)
+NPROCS := $(if $(filter 1,$(IS_MSVC)),$(NUMBER_OF_PROCESSORS),$(shell getconf _NPROCESSORS_ONLN))
 # prepare make options to run in parallel
 MFLAGS := -j $(NPROCS) --warn-undefined-variables \
                        --no-print-directory --no-keep-going
@@ -252,11 +333,13 @@ MFLAGS := -j $(NPROCS) --warn-undefined-variables \
 PYTHON ?= python3
 PROVE ?= prove
 PROVE_OPTS ?= -j $(NPROCS)
-SO_EXT := $(if $(DARWIN),dylib,so)
+DARWIN := $(filter Darwin,$(shell uname -s))
+SO_EXT := $(if $(filter 1,$(IS_MSVC)),dll,$(if $(DARWIN),dylib,so))
+STATIC_EXT := $(if $(filter 1,$(IS_MSVC)),lib,a)
 
 ceed.pc := $(LIBDIR)/pkgconfig/ceed.pc
 libceed.so := $(LIBDIR)/libceed.$(SO_EXT)
-libceed.a := $(LIBDIR)/libceed.a
+libceed.a := $(LIBDIR)/libceed.$(STATIC_EXT)
 libceed := $(if $(STATIC),$(libceed.a),$(libceed.so))
 CEED_LIBS = -lceed
 libceeds = $(libceed)
@@ -298,7 +381,7 @@ endif
 # Build the library (default target)
 # ------------------------------------------------------------
 
-lib: $(libceed) $(ceed.pc)
+lib: info $(libceed) $(ceed.pc)
 # run 'lib' target in parallel
 par:;@$(MAKE) $(MFLAGS) V=$(V) lib
 
@@ -309,7 +392,10 @@ $(libceed.so) : CEED_LDFLAGS += $(if $(DARWIN), -install_name @rpath/$(notdir $(
 # ------------------------------------------------------------
 
 # Interface and gallery
-libceed.c := $(filter-out interface/ceed-cuda.c interface/ceed-hip.c interface/ceed-jit-source-root-$(if $(for_install),default,install).c, $(wildcard interface/ceed*.c backends/weak/*.c gallery/*.c))
+libceed.c := $(filter-out interface/ceed-cuda.c interface/ceed-hip.c interface/ceed-jit-source-root-$(if $(for_install),default,install).c, $(wildcard interface/ceed*.c backends/*.c gallery/*.c))
+ifeq ($(IS_MSVC),1)
+  libceed.c := $(filter-out backends/ceed-backend-weak.c gallery/ceed-gallery-weak.c,$(libceed.c))
+endif
 gallery.c := $(wildcard gallery/*/ceed*.c)
 libceed.c += $(gallery.c)
 
@@ -516,6 +602,7 @@ MEMCHK_STATUS   = Disabled
 MEMCHK         := $(shell echo "$(HASH)include <valgrind/memcheck.h>" | $(CC) $(CPPFLAGS) -E - >/dev/null 2>&1 && echo 1)
 MEMCHK_BACKENDS = /cpu/self/memcheck/serial /cpu/self/memcheck/blocked
 ifeq ($(MEMCHK),1)
+  CPPFLAGS += $(if $(filter 1,$(IS_MSVC)),-DCEED_BUILD_MEMCHECK)
   MEMCHK_STATUS = Enabled
   libceed.c += $(ceedmemcheck.c)
   BACKENDS_MAKE += $(MEMCHK_BACKENDS)
@@ -527,9 +614,11 @@ AVX_FLAG    := $(if $(filter clang,$(CC_VENDOR)),+avx,-mavx)
 AVX         := $(filter $(AVX_FLAG),$(shell $(CC) $(CFLAGS:-M%=) -v -E -x c /dev/null 2>&1))
 AVX_BACKENDS = /cpu/self/avx/serial /cpu/self/avx/blocked
 ifneq ($(AVX),)
+ifneq ($(IS_MSVC),1)
   AVX_STATUS = Enabled
   libceed.c += $(avx.c)
   BACKENDS_MAKE += $(AVX_BACKENDS)
+endif
 endif
 
 # Collect list of libraries and paths for use in linking and pkg-config
@@ -540,6 +629,7 @@ PKG_STUBS_LIBS =
 # libXSMM Backends
 XSMM_BACKENDS = /cpu/self/xsmm/serial /cpu/self/xsmm/blocked
 ifneq ($(wildcard $(XSMM_DIR)/lib/libxsmm.*),)
+  CPPFLAGS += $(if $(filter 1,$(IS_MSVC)),-DCEED_BUILD_XSMM)
   PKG_LIBS += -L$(abspath $(XSMM_DIR))/lib -lxsmm
   MKL ?=
   ifeq (,$(MKL)$(MKLROOT))
@@ -560,13 +650,18 @@ endif
 
 # CUDA Backends
 ifneq ($(CUDA_DIR),)
-  CUDA_LIB_DIR := $(wildcard $(foreach d,lib lib64 lib/x86_64-linux-gnu,$(CUDA_DIR)/$d/libcudart.${SO_EXT}))
+  ifeq ($(IS_MSVC),1)
+    CUDA_LIB_DIR := $(if $(CUDA_LIB_DIR_OVERRIDE),$(CUDA_LIB_DIR_OVERRIDE),$(wildcard $(CUDA_DIR)/lib/x64/cudart.lib))
+  else
+    CUDA_LIB_DIR := $(wildcard $(foreach d,lib lib64 lib/x86_64-linux-gnu,$(CUDA_DIR)/$d/libcudart.${SO_EXT}))
+  endif
   CUDA_LIB_DIR := $(patsubst %/,%,$(dir $(firstword $(CUDA_LIB_DIR))))
 endif
 CUDA_LIB_DIR_STUBS := $(CUDA_LIB_DIR)/stubs
 CUDA_BACKENDS = /gpu/cuda/ref /gpu/cuda/shared /gpu/cuda/gen
 ifneq ($(CUDA_LIB_DIR),)
-  $(libceeds) : CPPFLAGS += -I$(CUDA_DIR)/include
+  CPPFLAGS += $(if $(filter 1,$(IS_MSVC)),-DCEED_BUILD_CUDA)
+  $(libceeds) : CPPFLAGS += -I"$(CUDA_DIR)/include"
   PKG_LIBS += -L$(abspath $(CUDA_LIB_DIR)) -lcudart -lnvrtc -lcuda -lcublas
   PKG_STUBS_LIBS += -L$(CUDA_LIB_DIR_STUBS)
   LIBCEED_CONTAINS_CXX = 1
@@ -575,6 +670,16 @@ ifneq ($(CUDA_LIB_DIR),)
   libceed.cpp   += $(cuda-all.cpp)
   libceed.cu    += $(cuda-all.cu)
   BACKENDS_MAKE += $(CUDA_BACKENDS)
+endif
+
+# Detect chipStar (SPIR-V HIP) vs AMD ROCm
+HIP_LIB_NAME = amdhip64
+ifneq ($(ROCM_DIR),)
+  ifneq ($(wildcard $(ROCM_DIR)/bin/hipconfig),)
+    ifneq (,$(findstring __HIP_PLATFORM_SPIRV__,$(shell $(ROCM_DIR)/bin/hipconfig 2>/dev/null)))
+      HIP_LIB_NAME = CHIP
+    endif
+  endif
 endif
 
 # HIP Backends
@@ -622,6 +727,7 @@ endif
 
 # MAGMA Backends
 ifneq ($(wildcard $(MAGMA_DIR)/lib/libmagma.*),)
+  CPPFLAGS += $(if $(filter 1,$(IS_MSVC)),-DCEED_BUILD_MAGMA)
   MAGMA_ARCH=$(shell nm -g $(MAGMA_DIR)/lib/libmagma.* | grep -c "hipblas")
   ifeq ($(MAGMA_ARCH), 0)  # CUDA MAGMA
     ifneq ($(CUDA_LIB_DIR),)
@@ -675,10 +781,7 @@ endif
 
 pkgconfig-libs-private = $(PKG_LIBS)
 ifeq ($(LIBCEED_CONTAINS_CXX),1)
-  ifneq ($(SYCL_LIB_DIR),)
-    $(libceeds) : LINK = $(SYCLCXX)
-    $(libceeds) : CEED_LDFLAGS += $(filter -fsycl -fno-sycl-id-queries-fit-in-int,$(SYCLFLAGS))
-  else
+  ifneq ($(IS_MSVC),1)
     $(libceeds) : LINK = $(CXX)
   endif
   ifeq ($(STATIC),1)
@@ -700,19 +803,35 @@ libceed.o = $(libceed.c:%.c=$(OBJDIR)/%.o) $(libceed.cpp:%.cpp=$(OBJDIR)/%.o) $(
 $(filter %fortran.o,$(libceed.o)) : CPPFLAGS += $(if $(filter 1,$(UNDERSCORE)),-DUNDERSCORE)
 $(libceed.o): | info-backends
 $(libceed.so) : $(call weak_last,$(libceed.o)) | $$(@D)/.DIR
+ifeq ($(IS_MSVC),1)
+	$(call quiet,LINK) /NOLOGO /DLL /OUT:$@ $^ $(LDFLAGS) $(CEED_LDFLAGS) $(CEED_LDLIBS)
+else
 	$(call quiet,LINK) $(LDFLAGS) $(CEED_LDFLAGS) -shared -o $@ $^ $(CEED_LDLIBS) $(LDLIBS)
+endif
 
 $(libceed.a) : $(call weak_last,$(libceed.o)) | $$(@D)/.DIR
+ifeq ($(IS_MSVC),1)
+	$(call quiet,AR) /NOLOGO /OUT:$@ $^
+else
 	$(call quiet,AR) $(ARFLAGS) $@ $^
+endif
 
 $(OBJDIR)/%.o : $(CURDIR)/%.c | $$(@D)/.DIR
+ifeq ($(IS_MSVC),1)
+	$(call quiet,CC) $(CPPFLAGS) $(CFLAGS) $(CONFIGFLAGS) /c /Fo$@ $(call native_path,$(abspath $<))
+else
 	$(call quiet,CC) $(CPPFLAGS) $(CFLAGS) $(CONFIGFLAGS) -c -o $@ $(abspath $<)
+endif
 
 $(OBJDIR)/%.o : $(CURDIR)/%.cpp | $$(@D)/.DIR
+ifeq ($(IS_MSVC),1)
+	$(call quiet,CXX) $(CPPFLAGS) $(CXXFLAGS) /c /Fo$@ $(call native_path,$(abspath $<))
+else
 	$(call quiet,CXX) $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $(abspath $<)
+endif
 
 $(OBJDIR)/%.o : $(CURDIR)/%.cu | $$(@D)/.DIR
-	$(call quiet,NVCC) $(filter-out -Wno-unused-function, $(CPPFLAGS)) $(NVCCFLAGS) -c -o $@ $(abspath $<)
+	MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' $(NVCC) $(filter-out -Wno-unused-function, $(CPPFLAGS)) $(NVCCFLAGS) -c -o $@ "$(shell cygpath -w '$<')"
 
 $(OBJDIR)/%.o : $(CURDIR)/%.hip.cpp | $$(@D)/.DIR
 	$(call quiet,HIPCC) $(CPPFLAGS) $(HIPCCFLAGS) -c -o $@ $(abspath $<)
@@ -892,18 +1011,20 @@ $(OBJDIR)/ceed.pc : pkgconfig-prefix = $(prefix)
 .INTERMEDIATE : $(OBJDIR)/ceed.pc
 %/ceed.pc : ceed.pc.template | $$(@D)/.DIR
 	@$(SED) \
-	    -e "s:%prefix%:$(pkgconfig-prefix):" \
-	    -e "s:%opt%:$(OPT):" \
-	    -e "s:%libs_private%:$(pkgconfig-libs-private):" $< > $@
+	    -e "s|%prefix%|$(pkgconfig-prefix)|" \
+	    -e "s|%opt%|$(OPT)|" \
+	    -e "s|%libs_private%|$(pkgconfig-libs-private)|" $< > $@
 
 GIT_DESCRIBE = $(shell git -c safe.directory=$PWD describe --always --dirty 2>/dev/null || printf "unknown\n")
 
 $(OBJDIR)/interface/ceed-config.o: Makefile
+ifneq ($(IS_MSVC),1)
 $(OBJDIR)/interface/ceed-config.o: CONFIGFLAGS += -DCEED_GIT_VERSION="\"$(GIT_DESCRIBE)\""
 $(OBJDIR)/interface/ceed-config.o: CONFIGFLAGS += -DCEED_BUILD_CONFIGURATION="\"// Build Configuration:$(foreach v,$(CONFIG_VARS),\n$(v) = $($(v)))\""
+endif
 
-$(OBJDIR)/interface/ceed-jit-source-root-default.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(abspath ./include)/\""
-$(OBJDIR)/interface/ceed-jit-source-root-install.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(abspath $(includedir))/\""
+$(OBJDIR)/interface/ceed-jit-source-root-default.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(call native_path,$(abspath ./include))/\""
+$(OBJDIR)/interface/ceed-jit-source-root-install.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(call native_path,$(abspath $(includedir)))/\""
 
 
 # ------------------------------------------------------------
@@ -1005,7 +1126,7 @@ CLANG_TIDY ?= clang-tidy
 	$(CLANG_TIDY) $(TIDY_OPTS) $^ -- $(CPPFLAGS) --std=c11 -I$(CUDA_DIR)/include -I$(ROCM_DIR)/include -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(abspath ./include)/\"" -DCEED_GIT_VERSION="\"$(GIT_DESCRIBE)\"" -DCEED_BUILD_CONFIGURATION="\"// Build Configuration:$(foreach v,$(CONFIG_VARS),\n$(v) = $($(v)))\""
 
 %.cpp.tidy : %.cpp
-	$(CLANG_TIDY) $(TIDY_OPTS) $^ -- $(CPPFLAGS) --std=c++11 -I$(CUDA_DIR)/include -I$(ROCM_DIR)/include
+	$(CLANG_TIDY) $(TIDY_OPTS) $^ -- $(CPPFLAGS) --std=c++11 -I$(CUDA_DIR)/include -I$(OCCA_DIR)/include -I$(ROCM_DIR)/include
 
 tidy-c   : $(libceed.c:%=%.tidy)
 tidy-cpp : $(libceed.cpp:%=%.tidy)

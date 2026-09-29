@@ -13,6 +13,13 @@
 #include <limits.h>
 #include <stdbool.h>
 
+#if defined(_MSC_VER)
+#if !defined(__cplusplus)
+#define restrict __restrict
+#endif
+#define __restrict__ __restrict
+#endif
+
 #if defined(__clang_analyzer__)
 #define CEED_INTERN
 #elif defined(__cplusplus)
@@ -21,7 +28,11 @@
 #define CEED_INTERN extern CEED_VISIBILITY(hidden)
 #endif
 
+#if defined(_MSC_VER)
+#define CEED_UNUSED
+#else
 #define CEED_UNUSED __attribute__((unused))
+#endif
 
 #define CEED_MAX_RESOURCE_LEN 1024
 #define CEED_MAX_BACKEND_PRIORITY UINT_MAX
@@ -61,7 +72,11 @@
 /// @ingroup Ceed
 #ifndef CeedPragmaOMP
 #ifdef _OPENMP
+#if defined(_MSC_VER)
+#define CeedPragmaOMPHelper(x) __pragma(x)
+#else
 #define CeedPragmaOMPHelper(x) _Pragma(#x)
+#endif
 #define CeedPragmaOMP(x) CeedPragmaOMPHelper(omp x)
 #else
 #define CeedPragmaOMP(x)

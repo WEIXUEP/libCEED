@@ -188,11 +188,13 @@ static int CeedOperatorSetupFields_Cuda(CeedQFunction qf, CeedOperator op, bool 
         q_size = (CeedSize)num_elem * (CeedSize)Q;
         CeedCallBackend(CeedVectorCreate(ceed, q_size, &q_vecs[i]));
         if (is_at_points) {
-          CeedInt num_points[num_elem];
+          CeedInt *num_points;
+          CeedCallBackend(CeedMalloc(num_elem, &num_points));
 
           for (CeedInt i = 0; i < num_elem; i++) num_points[i] = Q;
           CeedCallBackend(CeedBasisApplyAtPoints(basis, num_elem, num_points, CEED_NOTRANSPOSE, CEED_EVAL_WEIGHT, CEED_VECTOR_NONE, CEED_VECTOR_NONE,
                                                  q_vecs[i]));
+          CeedCallBackend(CeedFree(&num_points));
         } else {
           CeedCallBackend(CeedBasisApply(basis, num_elem, CEED_NOTRANSPOSE, CEED_EVAL_WEIGHT, CEED_VECTOR_NONE, q_vecs[i]));
         }

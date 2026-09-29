@@ -14,9 +14,9 @@ CEED_QFUNCTION(Poisson3DBuild)(void *ctx, const CeedInt Q, const CeedScalar *con
   // At every quadrature point, compute w/det(J).adj(J).adj(J)^T and store the symmetric part of the result.
   // in[0] is Jacobians with shape [3, nc=3, Q]
   // in[1] is quadrature weights, size (Q)
-  const CeedScalar(*J)[3][CEED_Q_VLA] = (const CeedScalar(*)[3][CEED_Q_VLA])in[0], *w = in[1];
+  const CeedScalar *J = in[0], *w = in[1];
   // out[0] is qdata, size (6*Q)
-  CeedScalar(*q_data)[CEED_Q_VLA] = (CeedScalar(*)[CEED_Q_VLA])out[0];
+  CeedScalar *q_data = out[0];
 
   const CeedInt dim = 3;
 
@@ -28,23 +28,23 @@ CEED_QFUNCTION(Poisson3DBuild)(void *ctx, const CeedInt Q, const CeedScalar *con
       for (CeedInt k = 0; k < dim; k++)
         // Equivalent code with no mod operations:
         // A[k][j] = J[k+1][j+1]*J[k+2][j+2] - J[k+2][j+1]*J[k+1][j+2]
-        A[k][j] = J[(k + 1) % dim][(j + 1) % dim][i] * J[(k + 2) % dim][(j + 2) % dim][i] -
-                  J[(k + 2) % dim][(j + 1) % dim][i] * J[(k + 1) % dim][(j + 2) % dim][i];
+        A[k][j] = J[(((k + 1) % dim) * 3 + ((j + 1) % dim)) * Q + i] * J[(((k + 2) % dim) * 3 + ((j + 2) % dim)) * Q + i] -
+                  J[(((k + 2) % dim) * 3 + ((j + 1) % dim)) * Q + i] * J[(((k + 1) % dim) * 3 + ((j + 2) % dim)) * Q + i];
 
     // Compute quadrature weight / det(J)
-    const CeedScalar qw = w[i] / (J[0][0][i] * A[0][0] + J[0][1][i] * A[0][1] + J[0][2][i] * A[0][2]);
+    const CeedScalar qw = w[i] / (J[((0) * 3 + (0)) * Q + i] * A[0][0] + J[((0) * 3 + (1)) * Q + i] * A[0][1] + J[((0) * 3 + (2)) * Q + i] * A[0][2]);
 
     // Compute geometric factors
     // Stored in Voigt convention
     // 0 5 4
     // 5 1 3
     // 4 3 2
-    q_data[0][i] = qw * (A[0][0] * A[0][0] + A[0][1] * A[0][1] + A[0][2] * A[0][2]);
-    q_data[1][i] = qw * (A[1][0] * A[1][0] + A[1][1] * A[1][1] + A[1][2] * A[1][2]);
-    q_data[2][i] = qw * (A[2][0] * A[2][0] + A[2][1] * A[2][1] + A[2][2] * A[2][2]);
-    q_data[3][i] = qw * (A[1][0] * A[2][0] + A[1][1] * A[2][1] + A[1][2] * A[2][2]);
-    q_data[4][i] = qw * (A[0][0] * A[2][0] + A[0][1] * A[2][1] + A[0][2] * A[2][2]);
-    q_data[5][i] = qw * (A[0][0] * A[1][0] + A[0][1] * A[1][1] + A[0][2] * A[1][2]);
+    q_data[(0) * Q + i] = qw * (A[0][0] * A[0][0] + A[0][1] * A[0][1] + A[0][2] * A[0][2]);
+    q_data[(1) * Q + i] = qw * (A[1][0] * A[1][0] + A[1][1] * A[1][1] + A[1][2] * A[1][2]);
+    q_data[(2) * Q + i] = qw * (A[2][0] * A[2][0] + A[2][1] * A[2][1] + A[2][2] * A[2][2]);
+    q_data[(3) * Q + i] = qw * (A[1][0] * A[2][0] + A[1][1] * A[2][1] + A[1][2] * A[2][2]);
+    q_data[(4) * Q + i] = qw * (A[0][0] * A[2][0] + A[0][1] * A[2][1] + A[0][2] * A[2][2]);
+    q_data[(5) * Q + i] = qw * (A[0][0] * A[1][0] + A[0][1] * A[1][1] + A[0][2] * A[1][2]);
   }  // End of Quadrature Point Loop
   return CEED_ERROR_SUCCESS;
 }

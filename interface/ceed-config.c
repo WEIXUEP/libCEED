@@ -7,8 +7,13 @@
 
 #include <ceed-impl.h>
 
+#if defined(_MSC_VER)
+const char *CeedGitVersion         = "CEED_GIT_VERSION";
+const char *CeedBuildConfiguration = "CEED_BUILD_CONFIGURATION";
+#else
 const char *CeedGitVersion         = CEED_GIT_VERSION;
 const char *CeedBuildConfiguration = CEED_BUILD_CONFIGURATION;
+#endif
 
 /// @addtogroup CeedUser
 /// @{

@@ -302,7 +302,9 @@ static int CeedBasisCreateProjectionMatrices(CeedBasis basis_from, CeedBasis bas
   CeedCall(CeedMatrixPseudoinverse(CeedBasisReturnCeed(basis_to), interp_to_source, Q * q_comp, P_to, interp_to_inv));
   // Build matrices
   CeedInt     num_matrices = 1 + (fe_space_to == CEED_FE_SPACE_H1) * (are_both_tensor ? 1 : dim);
-  CeedScalar *input_from[num_matrices], *output_project[num_matrices];
+  CeedScalar **input_from, **output_project;
+  CeedCall(CeedMalloc(num_matrices, &input_from));
+  CeedCall(CeedMalloc(num_matrices, &output_project));
 
   input_from[0]     = (CeedScalar *)interp_from_source;
   output_project[0] = *interp_project;
@@ -323,6 +325,8 @@ static int CeedBasisCreateProjectionMatrices(CeedBasis basis_from, CeedBasis bas
   // Cleanup
   CeedCall(CeedFree(&interp_to_inv));
   CeedCall(CeedFree(&interp_from));
+  CeedCall(CeedFree(&input_from));
+  CeedCall(CeedFree(&output_project));
   return CEED_ERROR_SUCCESS;
 }
 
@@ -543,6 +547,12 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt 
     CeedCall(CeedDestroy(&ceed_ref));
   }
 
+  CeedScalar *tmp[2], *chebyshev_x;
+  const CeedInt tmp_size = num_comp * CeedIntPow(Q_1d, dim);
+  CeedCall(CeedMalloc(tmp_size, &tmp[0]));
+  CeedCall(CeedMalloc(tmp_size, &tmp[1]));
+  CeedCall(CeedMalloc(Q_1d, &chebyshev_x));
+
   // Basis evaluation
   switch (t_mode) {
     case CEED_NOTRANSPOSE: {
@@ -559,8 +569,6 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt 
       CeedCall(CeedVectorGetArrayWrite(v, CEED_MEM_HOST, &v_array));
       switch (eval_mode) {
         case CEED_EVAL_INTERP: {
-          CeedScalar tmp[2][num_comp * CeedIntPow(Q_1d, dim)], chebyshev_x[Q_1d];
-
           // ---- Values at point
           for (CeedInt p = 0; p < total_num_points; p++) {
             CeedInt pre = num_comp * CeedIntPow(Q_1d, dim - 1), post = 1;
@@ -578,8 +586,6 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt 
           break;
         }
         case CEED_EVAL_GRAD: {
-          CeedScalar tmp[2][num_comp * CeedIntPow(Q_1d, dim)], chebyshev_x[Q_1d];
-
           // ---- Values at point
           for (CeedInt p = 0; p < total_num_points; p++) {
             // Dim**2 contractions, apply grad when pass == dim
@@ -623,8 +629,6 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt 
 
       switch (eval_mode) {
         case CEED_EVAL_INTERP: {
-          CeedScalar tmp[2][num_comp * CeedIntPow(Q_1d, dim)], chebyshev_x[Q_1d];
-
           // ---- Values at point
           for (CeedInt p = 0; p < total_num_points; p++) {
             CeedInt pre = num_comp * 1, post = 1;
@@ -642,8 +646,6 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt 
           break;
         }
         case CEED_EVAL_GRAD: {
-          CeedScalar tmp[2][num_comp * CeedIntPow(Q_1d, dim)], chebyshev_x[Q_1d];
-
           // ---- Values at point
           for (CeedInt p = 0; p < total_num_points; p++) {
             // Dim**2 contractions, apply grad when pass == dim
@@ -681,6 +683,9 @@ static int CeedBasisApplyAtPoints_Core(CeedBasis basis, bool apply_add, CeedInt 
       break;
     }
   }
+  CeedCall(CeedFree(&tmp[0]));
+  CeedCall(CeedFree(&tmp[1]));
+  CeedCall(CeedFree(&chebyshev_x));
   return CEED_ERROR_SUCCESS;
 }
 
@@ -1177,10 +1182,10 @@ int CeedMatrixMatrixMultiply(Ceed ceed, const CeedScalar *mat_A, const CeedScala
   @ref Utility
 **/
 int CeedQRFactorization(Ceed ceed, CeedScalar *mat, CeedScalar *tau, CeedInt m, CeedInt n) {
-  CeedScalar v[m];
-
   // Check matrix shape
   CeedCheck(n <= m, ceed, CEED_ERROR_UNSUPPORTED, "Cannot compute QR factorization with n > m");
+  CeedScalar *v;
+  CeedCall(CeedMalloc(m, &v));
 
   for (CeedInt i = 0; i < n; i++) {
     CeedScalar sigma = 0.0;
@@ -1211,6 +1216,7 @@ int CeedQRFactorization(Ceed ceed, CeedScalar *mat, CeedScalar *tau, CeedInt m, 
     mat[i + n * i] = R_ii;
     for (CeedInt j = i + 1; j < m; j++) mat[i + n * j] = v[j];
   }
+  CeedCall(CeedFree(&v));
   return CEED_ERROR_SUCCESS;
 }
 
@@ -1309,7 +1315,10 @@ int CeedSymmetricSchurDecomposition(Ceed ceed, CeedScalar *mat, CeedScalar *lamb
   // Check bounds for clang-tidy
   CeedCheck(n > 1, ceed, CEED_ERROR_UNSUPPORTED, "Cannot compute symmetric Schur decomposition of scalars");
 
-  CeedScalar v[n - 1], tau[n - 1], mat_T[n * n];
+  CeedScalar *v, *tau, *mat_T;
+  CeedCall(CeedMalloc(n - 1, &v));
+  CeedCall(CeedMalloc(n - 1, &tau));
+  CeedCall(CeedMalloc(n * n, &mat_T));
 
   // Copy mat to mat_T and set mat to I
   memcpy(mat_T, mat, n * n * sizeof(mat[0]));
@@ -1428,6 +1437,9 @@ int CeedSymmetricSchurDecomposition(Ceed ceed, CeedScalar *mat, CeedScalar *lamb
   for (CeedInt i = 0; i < n; i++) lambda[i] = mat_T[i + n * i];
 
   // Check convergence
+  CeedCall(CeedFree(&v));
+  CeedCall(CeedFree(&tau));
+  CeedCall(CeedFree(&mat_T));
   CeedCheck(itr < max_itr || q > n, ceed, CEED_ERROR_MINOR, "Symmetric QR failed to converge");
   return CEED_ERROR_SUCCESS;
 }

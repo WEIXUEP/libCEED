@@ -30,7 +30,7 @@
 /// @section Developer Library Developer Functions
 ///    These functions are intended to be used by library developers of libCEED and can generally be found in `"ceed-impl.h"`.
 
-#if !defined(CEED_SKIP_VISIBILITY)
+#if !defined(CEED_SKIP_VISIBILITY) && (defined(__GNUC__) || defined(__clang__))
 #define CEED_VISIBILITY(mode) __attribute__((visibility(#mode)))
 #else
 #define CEED_VISIBILITY(mode)

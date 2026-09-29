@@ -65,9 +65,12 @@ static int CeedBasisApplyCore_Ref(CeedBasis basis, bool apply_add, CeedInt num_e
             Q = P_1d;
           }
           CeedInt           pre = num_comp * CeedIntPow(P, dim - 1), post = num_elem;
-          CeedScalar        tmp[2][num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1)];
+          CeedScalar       *tmp[2];
           const CeedScalar *interp_1d;
 
+          const CeedInt tmp_size = num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1);
+          CeedCallBackend(CeedMalloc(tmp_size, &tmp[0]));
+          CeedCallBackend(CeedMalloc(tmp_size, &tmp[1]));
           CeedCallBackend(CeedBasisGetInterp1D(basis, &interp_1d));
           for (CeedInt d = 0; d < dim; d++) {
             CeedCallBackend(CeedTensorContractApply(contract, pre, P, post, Q, interp_1d, t_mode, add && (d == dim - 1), d == 0 ? u : tmp[d % 2],
@@ -75,6 +78,8 @@ static int CeedBasisApplyCore_Ref(CeedBasis basis, bool apply_add, CeedInt num_e
             pre /= P;
             post *= Q;
           }
+          CeedCallBackend(CeedFree(&tmp[0]));
+          CeedCallBackend(CeedFree(&tmp[1]));
         }
       } break;
       // Evaluate the gradient to/from quadrature points
@@ -94,8 +99,11 @@ static int CeedBasisApplyCore_Ref(CeedBasis basis, bool apply_add, CeedInt num_e
 
         CeedCallBackend(CeedBasisGetInterp1D(basis, &interp_1d));
         if (impl->collo_grad_1d) {
-          CeedScalar tmp[2][num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1)];
-          CeedScalar interp[num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1)];
+          CeedScalar *tmp[2], *interp;
+          const CeedInt tmp_size = num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1);
+          CeedCallBackend(CeedMalloc(tmp_size, &tmp[0]));
+          CeedCallBackend(CeedMalloc(tmp_size, &tmp[1]));
+          CeedCallBackend(CeedMalloc(tmp_size, &interp));
 
           // Interpolate to quadrature points (NoTranspose)
           //  or Grad to quadrature points (Transpose)
@@ -124,6 +132,9 @@ static int CeedBasisApplyCore_Ref(CeedBasis basis, bool apply_add, CeedInt num_e
             pre /= P;
             post *= Q;
           }
+          CeedCallBackend(CeedFree(&tmp[0]));
+          CeedCallBackend(CeedFree(&tmp[1]));
+          CeedCallBackend(CeedFree(&interp));
         } else if (impl->is_collocated) {  // Qpts collocated with nodes
           const CeedScalar *grad_1d;
 
@@ -148,7 +159,10 @@ static int CeedBasisApplyCore_Ref(CeedBasis basis, bool apply_add, CeedInt num_e
             P = Q_1d;
             Q = P_1d;
           }
-          CeedScalar tmp[2][num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1)];
+          CeedScalar *tmp[2];
+          const CeedInt tmp_size = num_elem * num_comp * Q * CeedIntPow(P > Q ? P : Q, dim - 1);
+          CeedCallBackend(CeedMalloc(tmp_size, &tmp[0]));
+          CeedCallBackend(CeedMalloc(tmp_size, &tmp[1]));
 
           // Dim**2 contractions, apply grad when pass == dim
           for (CeedInt p = 0; p < dim; p++) {
@@ -163,6 +177,8 @@ static int CeedBasisApplyCore_Ref(CeedBasis basis, bool apply_add, CeedInt num_e
               post *= Q;
             }
           }
+          CeedCallBackend(CeedFree(&tmp[0]));
+          CeedCallBackend(CeedFree(&tmp[1]));
         }
       } break;
       // Retrieve interpolation weights

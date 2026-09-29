@@ -28,7 +28,10 @@ int CeedCheckFilePath(Ceed ceed, const char *source_file_path, bool *is_valid) {
   // Sometimes we have path/to/file.h:function_name
   // Create temporary file path without name, if needed
   char *source_file_path_only;
-  char *last_colon = strrchr(source_file_path, ':');
+  const char *last_colon = strrchr(source_file_path, ':');
+
+  // A drive-letter colon is part of an absolute Windows path.
+  if (last_colon == source_file_path + 1) last_colon = NULL;
 
   if (last_colon) {
     size_t source_file_path_length = (last_colon - source_file_path + 1);

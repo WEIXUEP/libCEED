@@ -271,7 +271,8 @@ static inline int CeedElemRestrictionApplyCurlOrientedTranspose_Ref_Core(CeedEle
                                                                          const CeedScalar *__restrict__ uu, CeedScalar *__restrict__ vv) {
   // Restriction with tridiagonal transformation
   CeedElemRestriction_Ref *impl;
-  CeedScalar               vv_loc[block_size];
+  CeedScalar              *vv_loc;
+  CeedCallBackend(CeedMalloc(block_size, &vv_loc));
 
   CeedCallBackend(CeedElemRestrictionGetData(rstr, &impl));
   for (CeedSize e = start * block_size; e < stop * block_size; e += block_size) {
@@ -313,6 +314,7 @@ static inline int CeedElemRestrictionApplyCurlOrientedTranspose_Ref_Core(CeedEle
       }
     }
   }
+  CeedCallBackend(CeedFree(&vv_loc));
   return CEED_ERROR_SUCCESS;
 }
 
@@ -323,7 +325,8 @@ static inline int CeedElemRestrictionApplyCurlOrientedUnsignedTranspose_Ref_Core
                                                                                  const CeedScalar *__restrict__ uu, CeedScalar *__restrict__ vv) {
   // Restriction with (unsigned) tridiagonal transformation
   CeedElemRestriction_Ref *impl;
-  CeedScalar               vv_loc[block_size];
+  CeedScalar              *vv_loc;
+  CeedCallBackend(CeedMalloc(block_size, &vv_loc));
 
   CeedCallBackend(CeedElemRestrictionGetData(rstr, &impl));
   for (CeedSize e = start * block_size; e < stop * block_size; e += block_size) {
@@ -365,6 +368,7 @@ static inline int CeedElemRestrictionApplyCurlOrientedUnsignedTranspose_Ref_Core
       }
     }
   }
+  CeedCallBackend(CeedFree(&vv_loc));
   return CEED_ERROR_SUCCESS;
 }
 

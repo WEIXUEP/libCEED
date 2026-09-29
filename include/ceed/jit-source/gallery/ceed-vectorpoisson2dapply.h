@@ -13,9 +13,9 @@
 CEED_QFUNCTION(Vector3Poisson2DApply)(void *ctx, const CeedInt Q, const CeedScalar *const *in, CeedScalar *const *out) {
   // in[0] is gradient u, shape [2, nc=3, Q]
   // in[1] is quadrature data, size (3*Q)
-  const CeedScalar(*ug)[3][CEED_Q_VLA] = (const CeedScalar(*)[3][CEED_Q_VLA])in[0], (*q_data)[CEED_Q_VLA] = (const CeedScalar(*)[CEED_Q_VLA])in[1];
+  const CeedScalar *ug = in[0], *q_data = in[1];
   // out[0] is output to multiply against gradient v, shape [2, nc=3, Q]
-  CeedScalar(*vg)[3][CEED_Q_VLA] = (CeedScalar(*)[3][CEED_Q_VLA])out[0];
+  CeedScalar *vg = out[0];
 
   const CeedInt dim = 2, num_comp = 3;
 
@@ -26,14 +26,14 @@ CEED_QFUNCTION(Vector3Poisson2DApply)(void *ctx, const CeedInt Q, const CeedScal
     // 0 2
     // 2 1
     const CeedScalar dXdxdXdxT[2][2] = {
-        {q_data[0][i], q_data[2][i]},
-        {q_data[2][i], q_data[1][i]}
+        {q_data[(0) * Q + i], q_data[(2) * Q + i]},
+        {q_data[(2) * Q + i], q_data[(1) * Q + i]}
     };
 
     // Apply Poisson operator
     // j = direction of vg
     for (CeedInt j = 0; j < dim; j++)
-      for (CeedInt c = 0; c < num_comp; c++) vg[j][c][i] = (ug[0][c][i] * dXdxdXdxT[0][j] + ug[1][c][i] * dXdxdXdxT[1][j]);
+      for (CeedInt c = 0; c < num_comp; c++) vg[(j * num_comp + c) * Q + i] = (ug[(0 * num_comp + c) * Q + i] * dXdxdXdxT[0][j] + ug[(1 * num_comp + c) * Q + i] * dXdxdXdxT[1][j]);
   }  // End of Quadrature Point Loop
   return CEED_ERROR_SUCCESS;
 }
