@@ -266,7 +266,7 @@ CXXFLAGS ?= $(OPT) $(CXXFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
 FFLAGS ?= $(OPT) $(FFLAGS.$(FC_VENDOR))
 LIBCXX ?= $(if $(filter 1,$(IS_MSVC)),,-lstdc++)
 ifeq ($(IS_MSVC),1)
-NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' -Xcompiler /MD -cudart shared
+NVCCFLAGS ?= -ccbin $(CXX) $(if $(filter /O%,$(OPT)),-Xcompiler $(firstword $(filter /O%,$(OPT))))
 else
 NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' -Xcompiler -fPIC
 endif
@@ -279,10 +279,21 @@ ifneq ($(strip $(CUDA_TARGETS)),)
   ifneq ($(strip $(CUDA_TARGETS_UNKNOWN)),)
     $(error Unknown CUDA target(s): $(CUDA_TARGETS_UNKNOWN); expected targets such as sm_80)
   endif
-  NVCCFLAGS += $(foreach sm,$(CUDA_SMS),$(call cuda_gencode_sm,$(sm))) \
-    $(call cuda_gencode_compute,$(lastword $(CUDA_SMS)))
+  ifeq ($(IS_MSVC),1)
+    override NVCCFLAGS += $(foreach sm,$(CUDA_SMS),$(call cuda_gencode_sm,$(sm))) $(call cuda_gencode_compute,$(lastword $(CUDA_SMS)))
+  else
+    NVCCFLAGS += $(foreach sm,$(CUDA_SMS),$(call cuda_gencode_sm,$(sm))) \
+      $(call cuda_gencode_compute,$(lastword $(CUDA_SMS)))
+  endif
 else ifneq ($(CUDA_ARCH),)
-  NVCCFLAGS += -arch=$(CUDA_ARCH)
+  ifeq ($(IS_MSVC),1)
+    override NVCCFLAGS += -arch=$(CUDA_ARCH)
+  else
+    NVCCFLAGS += -arch=$(CUDA_ARCH)
+  endif
+endif
+ifeq ($(IS_MSVC),1)
+override NVCCFLAGS += -Xcompiler /MD -cudart shared
 endif
 HIPCCFLAGS ?= $(filter-out $(OMP_SIMD_FLAG),$(OPT)) -fPIC -munsafe-fp-atomics
 ifneq ($(HIP_ARCH),)
