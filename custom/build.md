@@ -25,3 +25,5 @@ F:/Program_Professional/msys2/usr/bin/make.exe -j2 lib prefix=K:/Project_WXP/git
 Output: `K:/Project_WXP/git/libCEED/lib/libceed.lib` with CUDA ref/shared/gen backends.
 
 The original example's standalone `-openmp:llvm` and `-I...` arguments are not valid make variable assignments. Do not put them between make arguments; the shown commands use the Makefile's tested MSVC flags.
+
+On Windows, the Makefile adds `/MD` to MSVC and NVCC host compilation and uses the shared CUDA runtime, so the resulting library can be linked by `/MD` CMake projects.

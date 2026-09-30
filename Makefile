@@ -265,7 +265,11 @@ CFLAGS ?= $(OPT) $(CFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
 CXXFLAGS ?= $(OPT) $(CXXFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
 FFLAGS ?= $(OPT) $(FFLAGS.$(FC_VENDOR))
 LIBCXX ?= $(if $(filter 1,$(IS_MSVC)),,-lstdc++)
-NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' $(if $(filter 1,$(IS_MSVC)),,-Xcompiler -fPIC)
+ifeq ($(IS_MSVC),1)
+NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' -Xcompiler /MD -cudart shared
+else
+NVCCFLAGS ?= -ccbin $(CXX) -Xcompiler '$(OPT)' -Xcompiler -fPIC
+endif
 CUDA_TARGETS_UNKNOWN := $(filter-out sm_%,$(CUDA_TARGETS))
 CUDA_SMS := $(patsubst sm_%,%,$(filter sm_%,$(CUDA_TARGETS)))
 CUDA_SMS := $(shell printf "%s\n" $(CUDA_SMS) | sort -n)
