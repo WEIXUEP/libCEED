@@ -21,7 +21,7 @@ LDFLAGS ?=
 STATIC ?=
 endif
 PEDANTIC ?=
-CMAKE_BUILD_TYPE_FLAG ?= MDd
+CMAKE_BUILD_TYPE_FLAG ?= MD
 CUDA_ARCH ?= $(if $(filter 1,$(IS_MSVC)),sm_86,)
 CUDA_TARGETS ?=
 ifeq ($(IS_MSVC),1)
@@ -221,14 +221,14 @@ CFLAGS.icc              := $(CFLAGS.gcc)
 CFLAGS.oneAPI           := $(CFLAGS.clang)
 CFLAGS.XL               := $(if $(STATIC),,-qpic) -MMD
 CFLAGS.emcc             := $(CFLAGS.clang)
-CFLAGS.msvc             := /nologo /std:c11 /MD /W3
+CFLAGS.msvc             := /nologo /std:c11
 CXXFLAGS.gcc            := $(if $(STATIC),,-fPIC) -std=c++11 -Wall -Wextra -Wno-unused-parameter -MMD -MP
 CXXFLAGS.clang          := $(CXXFLAGS.gcc)
 CXXFLAGS.icc            := $(CXXFLAGS.gcc)
 CXXFLAGS.oneAPI         := $(CXXFLAGS.clang)
 CXXFLAGS.XL             := $(if $(STATIC),,-qpic) -std=c++11 -MMD
 CXXFLAGS.emcc           := $(CXXFLAGS.clang)
-CXXFLAGS.msvc           := /nologo /std:c++17 /MD /W3 /EHsc
+CXXFLAGS.msvc           := /nologo /std:c++17 /W3 /EHsc
 FFLAGS.GNU              := $(if $(STATIC),,-fPIC) -cpp -Wall -Wextra -Wno-unused-parameter -Wno-unused-dummy-argument -MMD -MP
 FFLAGS.ifort            := $(if $(STATIC),,-fPIC) -cpp
 FFLAGS.ifx              := $(FFLAGS.ifort)
@@ -257,12 +257,23 @@ PEDANTICFLAGS ?= -Werror -pedantic
 
 # Compiler flags
 ifeq ($(IS_MSVC),1)
+  ifneq ($(filter MD MDd,$(CMAKE_BUILD_TYPE_FLAG)),$(CMAKE_BUILD_TYPE_FLAG))
+    $(error CMAKE_BUILD_TYPE_FLAG must be MD or MDd (got '$(CMAKE_BUILD_TYPE_FLAG)'))
+  endif
+  MSVC_RUNTIME_FLAG := /$(CMAKE_BUILD_TYPE_FLAG)
+  MSVC_ITERATOR_FLAG := /D_ITERATOR_DEBUG_LEVEL=$(if $(filter MDd,$(CMAKE_BUILD_TYPE_FLAG)),2,0)
+endif
+ifeq ($(IS_MSVC),1)
 OPT ?= /O2
 else
 OPT ?= -O $(MARCHFLAG) $(OPT.$(CC_VENDOR)) $(OMP_SIMD_FLAG)
 endif
 CFLAGS ?= $(OPT) $(CFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
 CXXFLAGS ?= $(OPT) $(CXXFLAGS.$(CC_VENDOR)) $(if $(PEDANTIC),$(PEDANTICFLAGS))
+ifeq ($(IS_MSVC),1)
+  CFLAGS += $(MSVC_RUNTIME_FLAG) $(MSVC_ITERATOR_FLAG)
+  CXXFLAGS += $(MSVC_RUNTIME_FLAG) $(MSVC_ITERATOR_FLAG)
+endif
 FFLAGS ?= $(OPT) $(FFLAGS.$(FC_VENDOR))
 LIBCXX ?= $(if $(filter 1,$(IS_MSVC)),,-lstdc++)
 ifeq ($(IS_MSVC),1)
@@ -293,7 +304,7 @@ else ifneq ($(CUDA_ARCH),)
   endif
 endif
 ifeq ($(IS_MSVC),1)
-override NVCCFLAGS += -Xcompiler /MD -cudart shared
+override NVCCFLAGS += -Xcompiler $(MSVC_RUNTIME_FLAG) -Xcompiler $(MSVC_ITERATOR_FLAG) -cudart shared
 endif
 HIPCCFLAGS ?= $(filter-out $(OMP_SIMD_FLAG),$(OPT)) -fPIC -munsafe-fp-atomics
 ifneq ($(HIP_ARCH),)
