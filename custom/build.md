@@ -34,6 +34,8 @@ Set `MAGMA_DIR` to the MAGMA installation prefix. Headers must be in `MAGMA_DIR/
 
 Windows uses MSVC `dumpbin.exe` next to the configured `link.exe` to distinguish CUDA and HIP MAGMA libraries; GNU `nm` is not required. The make `info` output prints the selected `MAGMA_LIB` path. With a CUDA MAGMA library and detected CUDA libraries, the enabled backends include `/gpu/cuda/magma` and `/gpu/cuda/magma/det`. The generated `ceed.pc` keeps MAGMA and CUDA dependencies in `-L<dir> -l<name>` form so CMake/pkg-config can import them; `CUDA_LIB_DIR_OVERRIDE` can specify the CUDA library directory.
 
+For MSVC, the MAGMA OpenMP metadata uses `-openmp:llvm`; GNU/Clang builds continue to use `-fopenmp`. Keep `OPT` consistent with the compiler, for example `OPT="/O2 -openmp:llvm ..."` for MSVC.
+
 For the Palace installation shown in the logs, keep `MAGMA_DIR=H:/fem/palace/build_debug_gpu_260930`; renaming `magma.lib` is unnecessary. MAGMA itself and its dependencies must already be installed before libCEED is built. The name detection was verified using MSVC test archives, including an installation path with spaces; this machine has no MAGMA installation for a full MAGMA backend build.
 
 ## Palace-style options (mapped to this machine)

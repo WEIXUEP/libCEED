@@ -777,7 +777,7 @@ ifneq ($(MAGMA_LIB),)
   ifeq ($(MAGMA_ARCH), 0)  # CUDA MAGMA
     ifneq ($(CUDA_LIB_DIR),)
       cuda_link = $(if $(STATIC),,-Wl,-rpath,$(CUDA_LIB_DIR)) -L$(CUDA_LIB_DIR) -lcublas -lcusparse -lcudart
-      omp_link = -fopenmp
+      omp_link = $(if $(filter 1,$(IS_MSVC)),-openmp:llvm,-fopenmp)
       magma_link_static = -L$(MAGMA_DIR)/lib -lmagma $(cuda_link) $(omp_link)
       magma_link_shared = -L$(MAGMA_DIR)/lib $(if $(STATIC),,-Wl,-rpath,$(abspath $(MAGMA_DIR)/lib)) -lmagma
       # Keep pkg-config output portable: CMake resolves -L/-l for MSVC too.
@@ -791,7 +791,7 @@ ifneq ($(MAGMA_LIB),)
     endif
   else  # HIP MAGMA
     ifneq ($(HIP_LIB_DIR),)
-      omp_link = -fopenmp
+      omp_link = $(if $(filter 1,$(IS_MSVC)),-openmp:llvm,-fopenmp)
       hip_link = $(if $(STATIC),,-Wl,-rpath,$(HIP_LIB_DIR)) -L$(HIP_LIB_DIR) -lhipblas -lhipsparse -lamdhip64
       magma_link_static = -L$(MAGMA_DIR)/lib -lmagma $(hip_link) $(omp_link)
       magma_link_shared = -L$(MAGMA_DIR)/lib $(hip_link) $(omp_link) $(if $(STATIC),,-Wl,-rpath,$(abspath $(MAGMA_DIR)/lib)) -lmagma
