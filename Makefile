@@ -780,12 +780,8 @@ ifneq ($(MAGMA_LIB),)
       omp_link = -fopenmp
       magma_link_static = -L$(MAGMA_DIR)/lib -lmagma $(cuda_link) $(omp_link)
       magma_link_shared = -L$(MAGMA_DIR)/lib $(if $(STATIC),,-Wl,-rpath,$(abspath $(MAGMA_DIR)/lib)) -lmagma
-      ifeq ($(IS_MSVC),1)
-        magma_cuda_libdir := $(if $(CUDA_LIB_DIR_OVERRIDE),$(CUDA_LIB_DIR_OVERRIDE),$(CUDA_DIR)/lib/x64)
-        magma_link := "$(MAGMA_LIB)" "$(magma_cuda_libdir)/cublas.lib" "$(magma_cuda_libdir)/cusparse.lib" "$(magma_cuda_libdir)/cudart.lib"
-      else
-        magma_link := $(if $(wildcard $(MAGMA_DIR)/lib/libmagma.${SO_EXT}),$(magma_link_shared),$(magma_link_static))
-      endif
+      # Keep pkg-config output portable: CMake resolves -L/-l for MSVC too.
+      magma_link := $(if $(wildcard $(MAGMA_DIR)/lib/libmagma.${SO_EXT}),$(magma_link_shared),$(magma_link_static))
       PKG_LIBS += $(magma_link)
       libceed.c   += $(magma.c)
       libceed.cpp += $(magma.cpp)
