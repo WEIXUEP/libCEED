@@ -580,6 +580,7 @@ info:
 	$(info ROCM_DIR      = $(ROCM_DIR)$(call backend_status,$(HIP_BACKENDS)))
 	$(info SYCL_DIR      = $(SYCL_DIR)$(call backend_status,$(SYCL_BACKENDS)))
 	$(info MAGMA_DIR     = $(MAGMA_DIR)$(call backend_status,$(MAGMA_BACKENDS)))
+	$(if $(filter 1,$(IS_MSVC)),$(info MAGMA_LIB     = $(MAGMA_LIB)))
 	$(info )
 	$(info -----------------------------------------)
 	$(info )
@@ -752,21 +753,44 @@ ifneq ($(SYCL_LIB_DIR),)
 endif
 
 # MAGMA Backends
-ifneq ($(wildcard $(MAGMA_DIR)/lib/libmagma.*),)
+ifeq ($(IS_MSVC),1)
+  # CMake/MSVC installations use magma.lib; also accept libmagma.lib.
+  MAGMA_LIB := $(shell if test -f "$(MAGMA_DIR)/lib/magma.lib"; then \
+    printf '%s' "$(MAGMA_DIR)/lib/magma.lib"; \
+    elif test -f "$(MAGMA_DIR)/lib/libmagma.lib"; then \
+    printf '%s' "$(MAGMA_DIR)/lib/libmagma.lib"; fi)
+else
+  MAGMA_LIB := $(wildcard $(MAGMA_DIR)/lib/libmagma.*)
+endif
+ifneq ($(MAGMA_LIB),)
   CPPFLAGS += $(if $(filter 1,$(IS_MSVC)),-DCEED_BUILD_MAGMA)
-  MAGMA_ARCH=$(shell nm -g $(MAGMA_DIR)/lib/libmagma.* | grep -c "hipblas")
+  ifeq ($(IS_MSVC),1)
+    magma_dumpbin := "$(subst \ , ,$(subst ",,$(subst link.exe,dumpbin.exe,$(LINK))))"
+    MAGMA_ARCH := $(shell if symbols=$$(MSYS2_ARG_CONV_EXCL='*' $(magma_dumpbin) /symbols "$(MAGMA_LIB)"); then \
+      printf '%s\n' "$$symbols" | grep -c "hipblas"; else printf 'error'; fi)
+    ifeq ($(MAGMA_ARCH),error)
+      $(error Cannot inspect MAGMA library '$(MAGMA_LIB)' with MSVC dumpbin)
+    endif
+  else
+    MAGMA_ARCH=$(shell nm -g $(MAGMA_DIR)/lib/libmagma.* | grep -c "hipblas")
+  endif
   ifeq ($(MAGMA_ARCH), 0)  # CUDA MAGMA
     ifneq ($(CUDA_LIB_DIR),)
       cuda_link = $(if $(STATIC),,-Wl,-rpath,$(CUDA_LIB_DIR)) -L$(CUDA_LIB_DIR) -lcublas -lcusparse -lcudart
       omp_link = -fopenmp
       magma_link_static = -L$(MAGMA_DIR)/lib -lmagma $(cuda_link) $(omp_link)
       magma_link_shared = -L$(MAGMA_DIR)/lib $(if $(STATIC),,-Wl,-rpath,$(abspath $(MAGMA_DIR)/lib)) -lmagma
-      magma_link := $(if $(wildcard $(MAGMA_DIR)/lib/libmagma.${SO_EXT}),$(magma_link_shared),$(magma_link_static))
+      ifeq ($(IS_MSVC),1)
+        magma_cuda_libdir := $(if $(CUDA_LIB_DIR_OVERRIDE),$(CUDA_LIB_DIR_OVERRIDE),$(CUDA_DIR)/lib/x64)
+        magma_link := "$(MAGMA_LIB)" "$(magma_cuda_libdir)/cublas.lib" "$(magma_cuda_libdir)/cusparse.lib" "$(magma_cuda_libdir)/cudart.lib"
+      else
+        magma_link := $(if $(wildcard $(MAGMA_DIR)/lib/libmagma.${SO_EXT}),$(magma_link_shared),$(magma_link_static))
+      endif
       PKG_LIBS += $(magma_link)
       libceed.c   += $(magma.c)
       libceed.cpp += $(magma.cpp)
-      $(magma.c:%.c=$(OBJDIR)/%.o) $(magma.c:%=%.tidy) : CPPFLAGS += -DADD_ -I$(MAGMA_DIR)/include -I$(CUDA_DIR)/include
-      $(magma.cpp:%.cpp=$(OBJDIR)/%.o) $(magma.cpp:%=%.tidy) : CPPFLAGS += -DADD_ -I$(MAGMA_DIR)/include -I$(CUDA_DIR)/include
+      $(magma.c:%.c=$(OBJDIR)/%.o) $(magma.c:%=%.tidy) : CPPFLAGS += -DADD_ -I"$(MAGMA_DIR)/include" -I"$(CUDA_DIR)/include"
+      $(magma.cpp:%.cpp=$(OBJDIR)/%.o) $(magma.cpp:%=%.tidy) : CPPFLAGS += -DADD_ -I"$(MAGMA_DIR)/include" -I"$(CUDA_DIR)/include"
       MAGMA_BACKENDS = /gpu/cuda/magma /gpu/cuda/magma/det
     endif
   else  # HIP MAGMA

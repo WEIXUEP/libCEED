@@ -28,6 +28,14 @@ The original example's standalone `-openmp:llvm` and `-I...` arguments are not v
 
 On Windows, `CMAKE_BUILD_TYPE_FLAG` controls the MSVC runtime used by C and C++ compilation and by the NVCC host compiler. Use `CMAKE_BUILD_TYPE_FLAG=MD` for Release consumers (`_ITERATOR_DEBUG_LEVEL=0`) or `CMAKE_BUILD_TYPE_FLAG=MDd` for Debug consumers (`_ITERATOR_DEBUG_LEVEL=2`). The Palace application and libCEED must use the same value. CUDA still uses the shared runtime (`-cudart shared`).
 
+## MAGMA (Windows)
+
+Set `MAGMA_DIR` to the MAGMA installation prefix. Headers must be in `MAGMA_DIR/include` (including `magma_v2.h`), and the library may be either `MAGMA_DIR/lib/magma.lib` or `MAGMA_DIR/lib/libmagma.lib`. If both exist, `magma.lib` takes precedence. Paths containing spaces are supported for MAGMA library detection and include arguments.
+
+Windows uses MSVC `dumpbin.exe` next to the configured `link.exe` to distinguish CUDA and HIP MAGMA libraries; GNU `nm` is not required. The make `info` output prints the selected `MAGMA_LIB` path. With a CUDA MAGMA library and detected CUDA libraries, the enabled backends include `/gpu/cuda/magma` and `/gpu/cuda/magma/det`. Windows CUDA MAGMA link arguments use the selected `.lib` and the CUDA `cublas.lib`, `cusparse.lib`, and `cudart.lib` files; `CUDA_LIB_DIR_OVERRIDE` can specify their directory.
+
+For the Palace installation shown in the logs, keep `MAGMA_DIR=H:/fem/palace/build_debug_gpu_260930`; renaming `magma.lib` is unnecessary. MAGMA itself and its dependencies must already be installed before libCEED is built. The name detection was verified using MSVC test archives, including an installation path with spaces; this machine has no MAGMA installation for a full MAGMA backend build.
+
 ## Palace-style options (mapped to this machine)
 
 After the setup commands above, this reproduces the supplied Palace options in separate output directories:
