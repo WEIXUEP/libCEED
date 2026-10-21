@@ -24,6 +24,7 @@ PEDANTIC ?=
 CMAKE_BUILD_TYPE_FLAG ?= MD
 CUDA_ARCH ?= $(if $(filter 1,$(IS_MSVC)),sm_86,)
 CUDA_TARGETS ?=
+CODE_PROTECTION ?= 0
 ifeq ($(IS_MSVC),1)
   CC ?= D:/Program_Professional/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/cl.exe
   CXX ?= $(CC)
@@ -132,6 +133,7 @@ $(info   LDFLAGS=$(LDFLAGS))
 $(info   STATIC=$(STATIC))
 $(info   PEDANTIC=$(PEDANTIC))
 $(info   CMAKE_BUILD_TYPE_FLAG=$(CMAKE_BUILD_TYPE_FLAG))
+$(info   CODE_PROTECTION=$(CODE_PROTECTION))
 $(info   CUDA_ARCH=$(CUDA_ARCH))
 $(info   CC=$(CC))
 $(info   CXX=$(CXX))
@@ -336,6 +338,12 @@ CFLAGS += $(if $(ASAN),$(AFLAGS))
 FFLAGS += $(if $(ASAN),$(AFLAGS))
 CEED_LDFLAGS += $(if $(ASAN),$(AFLAGS))
 CPPFLAGS += -I./include
+ifneq ($(CODE_PROTECTION),0)
+  ifneq ($(CODE_PROTECTION),1)
+    $(error CODE_PROTECTION must be 0 or 1 (got '$(CODE_PROTECTION)'))
+  endif
+  CPPFLAGS += -DCEED_CODE_PROTECTION=1
+endif
 OBJDIR := build
 for_install := $(filter install,$(MAKECMDGOALS))
 LIBDIR := $(if $(for_install),$(OBJDIR),lib)
@@ -808,6 +816,13 @@ ifneq ($(MAGMA_LIB),)
   BACKENDS_MAKE += $(MAGMA_BACKENDS)
 endif
 
+# CPU-only protected builds do not need source files for QFunction evaluation.
+ifeq ($(CODE_PROTECTION),1)
+  ifeq ($(filter /gpu/%,$(BACKENDS_MAKE)),)
+    CPPFLAGS += -DCEED_DISABLE_JIT_SOURCE=1
+  endif
+endif
+
 BACKENDS ?= $(BACKENDS_MAKE)
 export BACKENDS
 
@@ -1069,8 +1084,12 @@ $(OBJDIR)/interface/ceed-config.o: CONFIGFLAGS += -DCEED_GIT_VERSION="\"$(GIT_DE
 $(OBJDIR)/interface/ceed-config.o: CONFIGFLAGS += -DCEED_BUILD_CONFIGURATION="\"// Build Configuration:$(foreach v,$(CONFIG_VARS),\n$(v) = $($(v)))\""
 endif
 
+ifeq ($(CODE_PROTECTION):$(filter /gpu/%,$(BACKENDS_MAKE)),1:)
+$(OBJDIR)/interface/ceed-jit-source-root-default.o $(OBJDIR)/interface/ceed-jit-source-root-install.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"\""
+else
 $(OBJDIR)/interface/ceed-jit-source-root-default.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(call native_path,$(abspath ./include))/\""
 $(OBJDIR)/interface/ceed-jit-source-root-install.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(call native_path,$(abspath $(includedir)))/\""
+endif
 
 
 # ------------------------------------------------------------
@@ -1228,7 +1247,7 @@ print-% :
 CONFIG_VARS = CC CXX FC NVCC NVCC_CXX HIPCC \
   OPT CFLAGS CPPFLAGS CXXFLAGS FFLAGS NVCCFLAGS HIPCCFLAGS SYCLFLAGS \
   AR ARFLAGS LDFLAGS LDLIBS LIBCXX SED \
-  MAGMA_DIR XSMM_DIR CUDA_DIR CUDA_ARCH CUDA_TARGETS MFEM_DIR PETSC_DIR NEK5K_DIR ROCM_DIR HIP_ARCH SYCL_DIR
+  MAGMA_DIR XSMM_DIR CUDA_DIR CUDA_ARCH CUDA_TARGETS CODE_PROTECTION MFEM_DIR PETSC_DIR NEK5K_DIR ROCM_DIR HIP_ARCH SYCL_DIR
 
 # $(call needs_save,CFLAGS) returns true (a nonempty string) if CFLAGS
 # was set on the command line or in config.mk (where it will appear as

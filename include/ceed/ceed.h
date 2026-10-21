@@ -133,7 +133,11 @@ CEED_EXTERN int CeedErrorImpl(Ceed ceed, const char *filename, int lineno, const
 ///
 /// @ingroup Ceed
 /// @sa CeedSetErrorHandler()
+#if defined(CEED_CODE_PROTECTION) && CEED_CODE_PROTECTION
+#define CeedError(ceed, ecode, ...) (CeedErrorImpl((ceed), "<protected>", 0, __func__, (ecode), __VA_ARGS__), (ecode))
+#else
 #define CeedError(ceed, ecode, ...) (CeedErrorImpl((ceed), __FILE__, __LINE__, __func__, (ecode), __VA_ARGS__), (ecode))
+#endif
 
 /// Ceed error handlers
 typedef int (*CeedErrorHandler)(Ceed, const char *, int, const char *, int, const char *, va_list *);

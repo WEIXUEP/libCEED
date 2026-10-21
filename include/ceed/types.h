@@ -45,9 +45,15 @@
   This macro populates the correct function annotations for User QFunction source for code generation backends or populates default values for CPU
 backends. It also creates a variable `name_loc` populated with the correct source path for creating the respective User QFunction.
 **/
+#if defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE
+#define CEED_QFUNCTION_SOURCE(name) ""
+#else
+#define CEED_QFUNCTION_SOURCE(name) __FILE__ ":" #name
+#endif
+
 #ifndef CEED_QFUNCTION
-#define CEED_QFUNCTION(name)                                        \
-  static const char              name##_loc[] = __FILE__ ":" #name; \
+#define CEED_QFUNCTION(name)                                               \
+  static const char              name##_loc[] = CEED_QFUNCTION_SOURCE(name); \
   CEED_QFUNCTION_ATTR static int name
 #endif
 
@@ -74,7 +80,7 @@ pub unsafe extern "C" fn build_mass_rs(
   CEED_QFUNCTION_ATTR static int name(void *ctx, const CeedInt Q, const CeedScalar *const *in, CeedScalar *const *out) {     \
     return name##_rs(ctx, Q, in, out);                                                                                       \
   }                                                                                                                          \
-  static const char name##_loc[] = __FILE__ ":" #name;
+  static const char name##_loc[] = CEED_QFUNCTION_SOURCE(name);
 #endif
 // Note: placing the _loc of the function below the function in the macro is required because python cffi will exclude the previous line (the }) based on the backslash at the end of it, which is required for our python build script to exclude macros. See /python/build_ceed_cffi.py for more details
 

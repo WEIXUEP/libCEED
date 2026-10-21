@@ -1394,7 +1394,7 @@ int CeedInit(const char *resource, Ceed *ceed) {
 
   // Set default JiT source root
   // Note: there will always be the default root for every Ceed but all additional paths are added to the top-most parent
-  CeedCall(CeedAddJitSourceRoot(*ceed, (char *)CeedJitSourceRootDefault));
+  if (CeedJitSourceRootDefault[0]) CeedCall(CeedAddJitSourceRoot(*ceed, (char *)CeedJitSourceRootDefault));
 
   // By default, make CUDA compile without Clang, use nvrtc instead
   // Note that this is overridden if a Rust file is included (Rust requires Clang)

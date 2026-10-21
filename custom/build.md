@@ -36,6 +36,12 @@ Windows uses MSVC `dumpbin.exe` next to the configured `link.exe` to distinguish
 
 For MSVC, the MAGMA OpenMP metadata uses `-openmp:llvm`; GNU/Clang builds continue to use `-fopenmp`. Keep `OPT` consistent with the compiler, for example `OPT="/O2 -openmp:llvm ..."` for MSVC.
 
+`CODE_PROTECTION=1` hides source filenames and line numbers passed by the `CeedError` macro, replacing them with `<protected>:0`. The default is `CODE_PROTECTION=0`, preserving normal diagnostics. The Makefile passes `CEED_CODE_PROTECTION=1` to C, C++, and CUDA compilation. Consumers compiling their own calls to `CeedError` must also define `CEED_CODE_PROTECTION=1` if they want the same behavior; the installed headers do not force it on consumers.
+
+Append only `CODE_PROTECTION=1` to the existing build command to enable protection. No additional protection switches or changes to backend settings are required. For CPU-only builds, it automatically omits QFunction source locations and the default JIT source root when no CUDA, HIP, SYCL, or MAGMA GPU backend is compiled. CPU QFunctions still execute their compiled function pointers. The Makefile supplies the internal `CEED_DISABLE_JIT_SOURCE` definition automatically. Installed headers do not force this mode on consumers; applications defining their own QFunctions must use matching definitions if they also want to omit their source locations.
+
+When any GPU backend is compiled, QFunction source locations and JIT source roots remain available because those backends need them to load source code, even when the selected runtime resource is CPU. Function names, error message contents, object/archive metadata, debug/PDB records, and third-party objects are unaffected in either mode. This switch does not guarantee that every filename is removed from the library. Rebuild all objects when changing `CODE_PROTECTION` or enabling/disabling GPU backends; make does not track command-line flag changes. Use separate `OBJDIR`/`LIBDIR` values for protected and normal builds.
+
 For the Palace installation shown in the logs, keep `MAGMA_DIR=H:/fem/palace/build_debug_gpu_260930`; renaming `magma.lib` is unnecessary. MAGMA itself and its dependencies must already be installed before libCEED is built. The name detection was verified using MSVC test archives, including an installation path with spaces; this machine has no MAGMA installation for a full MAGMA backend build.
 
 ## Palace-style options (mapped to this machine)
