@@ -696,7 +696,7 @@ int CeedVectorNorm(CeedVector vec, CeedNormType norm_type, CeedScalar *norm) {
 
   const CeedScalar *array;
   CeedCall(CeedVectorGetArrayRead(vec, CEED_MEM_HOST, &array));
-  assert(array);
+  CeedAssert(array);
 
   *norm = 0.;
   switch (norm_type) {
@@ -750,7 +750,7 @@ int CeedVectorScale(CeedVector x, CeedScalar alpha) {
 
   // Default implementation
   CeedCall(CeedVectorGetArray(x, CEED_MEM_HOST, &x_array));
-  assert(x_array);
+  CeedAssert(x_array);
   for (CeedSize i = 0; i < length; i++) x_array[i] *= alpha;
   CeedCall(CeedVectorRestoreArray(x, &x_array));
   return CEED_ERROR_SUCCESS;
@@ -816,8 +816,8 @@ int CeedVectorAXPY(CeedVector y, CeedScalar alpha, CeedVector x) {
   CeedCall(CeedVectorGetArray(y, CEED_MEM_HOST, &y_array));
   CeedCall(CeedVectorGetArrayRead(x, CEED_MEM_HOST, &x_array));
 
-  assert(x_array);
-  assert(y_array);
+  CeedAssert(x_array);
+  CeedAssert(y_array);
 
   for (CeedSize i = 0; i < length_y; i++) y_array[i] += alpha * x_array[i];
 
@@ -887,8 +887,8 @@ int CeedVectorAXPBY(CeedVector y, CeedScalar alpha, CeedScalar beta, CeedVector 
   CeedCall(CeedVectorGetArray(y, CEED_MEM_HOST, &y_array));
   CeedCall(CeedVectorGetArrayRead(x, CEED_MEM_HOST, &x_array));
 
-  assert(x_array);
-  assert(y_array);
+  CeedAssert(x_array);
+  CeedAssert(y_array);
 
   for (CeedSize i = 0; i < length_y; i++) y_array[i] = alpha * x_array[i] + beta * y_array[i];
 
@@ -978,9 +978,9 @@ int CeedVectorPointwiseMult(CeedVector w, CeedVector x, CeedVector y) {
     y_array = w_array;
   }
 
-  assert(w_array);
-  assert(x_array);
-  assert(y_array);
+  CeedAssert(w_array);
+  CeedAssert(x_array);
+  CeedAssert(y_array);
 
   for (CeedSize i = 0; i < length_w; i++) w_array[i] = x_array[i] * y_array[i];
 

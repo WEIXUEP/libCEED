@@ -126,6 +126,8 @@ ifeq (,$(filter-out undefined default,$(origin ARFLAGS)))
 endif
 endif
 
+CODE_PROTECTION_ACTIVE := $(if $(filter 1:MD,$(CODE_PROTECTION):$(CMAKE_BUILD_TYPE_FLAG)),1,0)
+
 $(info Windows/MSVC build configuration:)
 $(info   IS_MSVC=$(IS_MSVC))
 $(info   prefix=$(prefix))
@@ -133,7 +135,7 @@ $(info   LDFLAGS=$(LDFLAGS))
 $(info   STATIC=$(STATIC))
 $(info   PEDANTIC=$(PEDANTIC))
 $(info   CMAKE_BUILD_TYPE_FLAG=$(CMAKE_BUILD_TYPE_FLAG))
-$(info   CODE_PROTECTION=$(CODE_PROTECTION))
+$(info   CODE_PROTECTION_REQUESTED=$(CODE_PROTECTION))
 $(info   CUDA_ARCH=$(CUDA_ARCH))
 $(info   CC=$(CC))
 $(info   CXX=$(CXX))
@@ -342,6 +344,8 @@ ifneq ($(CODE_PROTECTION),0)
   ifneq ($(CODE_PROTECTION),1)
     $(error CODE_PROTECTION must be 0 or 1 (got '$(CODE_PROTECTION)'))
   endif
+endif
+ifeq ($(CODE_PROTECTION_ACTIVE),1)
   CPPFLAGS += -DCEED_CODE_PROTECTION=1
 endif
 OBJDIR := build
@@ -816,12 +820,35 @@ ifneq ($(MAGMA_LIB),)
   BACKENDS_MAKE += $(MAGMA_BACKENDS)
 endif
 
-# CPU-only protected builds do not need source files for QFunction evaluation.
-ifeq ($(CODE_PROTECTION),1)
+# CPU-only Release protection does not need source files for QFunction evaluation.
+PROTECT_CPU_JIT := 0
+PROTECT_CPU_ARCHIVE := 0
+ifeq ($(CODE_PROTECTION_ACTIVE),1)
   ifeq ($(filter /gpu/%,$(BACKENDS_MAKE)),)
+    PROTECT_CPU_JIT := 1
     CPPFLAGS += -DCEED_DISABLE_JIT_SOURCE=1
+    ifeq ($(IS_MSVC),1)
+      ifneq ($(STATIC),)
+        PROTECT_CPU_ARCHIVE := 1
+      endif
+    endif
   endif
 endif
+
+$(info Code protection effective configuration:)
+$(info   CODE_PROTECTION=$(CODE_PROTECTION_ACTIVE))
+ifeq ($(CODE_PROTECTION_ACTIVE),0)
+  ifeq ($(CODE_PROTECTION),0)
+    $(info   CODE_PROTECTION_DISABLED_REASON=Protection was not requested (CODE_PROTECTION=0))
+  else
+    $(info   CODE_PROTECTION_DISABLED_REASON=CMAKE_BUILD_TYPE_FLAG=$(CMAKE_BUILD_TYPE_FLAG); protection requires Release mode (MD))
+  endif
+endif
+$(info   CMAKE_BUILD_TYPE_FLAG=$(CMAKE_BUILD_TYPE_FLAG))
+$(info   CODE_PROTECTION_ACTIVE=$(CODE_PROTECTION_ACTIVE))
+$(info   PROTECT_CPU_JIT=$(PROTECT_CPU_JIT))
+$(info   PROTECT_CPU_ARCHIVE=$(PROTECT_CPU_ARCHIVE))
+$(info   GPU_BACKENDS=$(or $(filter /gpu/%,$(BACKENDS_MAKE)),(none)))
 
 BACKENDS ?= $(BACKENDS_MAKE)
 export BACKENDS
@@ -870,9 +897,20 @@ else
 	$(call quiet,LINK) $(LDFLAGS) $(CEED_LDFLAGS) -shared -o $@ $^ $(CEED_LDLIBS) $(LDLIBS)
 endif
 
+ifeq ($(PROTECT_CPU_ARCHIVE),1)
+.PHONY: protect-cpu-archive-force
+$(libceed.a) : scripts/protect-msvc-library.ps1 protect-cpu-archive-force
+endif
 $(libceed.a) : $(call weak_last,$(libceed.o)) | $$(@D)/.DIR
 ifeq ($(IS_MSVC),1)
+ifeq ($(PROTECT_CPU_ARCHIVE),1)
+	@printf '%s\n' $(call weak_last,$(libceed.o)) > "$@.objects"
+	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/protect-msvc-library.ps1 \
+	  -Librarian "$(subst \ , ,$(subst ",,$(AR)))" \
+	  -Output "$@" -ObjectList "$@.objects"
+else
 	$(call quiet,AR) /NOLOGO /OUT:$@ $^
+endif
 else
 	$(call quiet,AR) $(ARFLAGS) $@ $^
 endif
@@ -1084,7 +1122,7 @@ $(OBJDIR)/interface/ceed-config.o: CONFIGFLAGS += -DCEED_GIT_VERSION="\"$(GIT_DE
 $(OBJDIR)/interface/ceed-config.o: CONFIGFLAGS += -DCEED_BUILD_CONFIGURATION="\"// Build Configuration:$(foreach v,$(CONFIG_VARS),\n$(v) = $($(v)))\""
 endif
 
-ifeq ($(CODE_PROTECTION):$(filter /gpu/%,$(BACKENDS_MAKE)),1:)
+ifeq ($(PROTECT_CPU_JIT),1)
 $(OBJDIR)/interface/ceed-jit-source-root-default.o $(OBJDIR)/interface/ceed-jit-source-root-install.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"\""
 else
 $(OBJDIR)/interface/ceed-jit-source-root-default.o : CPPFLAGS += -DCEED_JIT_SOURCE_ROOT_DEFAULT="\"$(call native_path,$(abspath ./include))/\""

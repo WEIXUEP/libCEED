@@ -936,7 +936,7 @@ int CeedGetWorkVector(Ceed ceed, CeedSize len, CeedVector *vec) {
   }
   // Long enough vector was not found
   // Note: assert fixing bad clang-tidy assumption that num_vecs > max_vecs is ever possible
-  assert(ceed->work_vectors->num_vecs <= ceed->work_vectors->max_vecs);
+  CeedAssert(ceed->work_vectors->num_vecs <= ceed->work_vectors->max_vecs);
   if (i == ceed->work_vectors->num_vecs) {
     if (ceed->work_vectors->max_vecs == 0) {
       ceed->work_vectors->max_vecs = 1;

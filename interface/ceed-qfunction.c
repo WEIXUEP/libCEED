@@ -691,8 +691,12 @@ int CeedQFunctionCreateInterior(Ceed ceed, CeedInt vec_length, CeedQFunctionUser
     return CEED_ERROR_SUCCESS;
   }
 
+#if defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE
+  CeedCheck(!strlen(source) || strrchr(source, ':'), ceed, CEED_ERROR_INCOMPLETE, "Source identifier must include a function name");
+#else
   CeedCheck(!strlen(source) || strrchr(source, ':'), ceed, CEED_ERROR_INCOMPLETE,
             "Provided path to source does not include function name. Provided: \"%s\"\nRequired: \"\\abs_path\\file.h:function_name\"", source);
+#endif
 
   CeedCall(CeedCalloc(1, qf));
   CeedCall(CeedObjectCreate(ceed, CeedQFunctionView_Object, CeedQFunctionDestroy_Object, &(*qf)->obj));

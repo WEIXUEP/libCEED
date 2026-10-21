@@ -11,7 +11,15 @@
 
 #include <ceed.h>
 #include <ceed/backend.h>
+#include <assert.h>
 #include <stdbool.h>
+
+// Keep CPU protection assertions active without embedding source locations.
+#if defined(_MSC_VER) && defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE && !defined(NDEBUG)
+#define CeedAssert(expression) ((void)(!!(expression) || (_wassert(_CRT_WIDE(#expression), L"<protected>", 0), 0)))
+#else
+#define CeedAssert(expression) assert(expression)
+#endif
 
 CEED_INTERN const char *CeedJitSourceRootDefault;
 

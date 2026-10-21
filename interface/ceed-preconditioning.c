@@ -1516,7 +1516,7 @@ int CeedOperatorGetBasisPointer(CeedBasis basis, CeedEvalMode eval_mode, const C
     case CEED_EVAL_WEIGHT:
       break;  // Caught by QF Assembly
   }
-  assert(*basis_ptr != NULL);
+  CeedAssert(*basis_ptr != NULL);
   return CEED_ERROR_SUCCESS;
 }
 
@@ -2331,7 +2331,7 @@ int CeedOperatorLinearAssembleQFunction(CeedOperator op, CeedVector *assembled, 
   @ref User
 **/
 int CeedOperatorLinearAssembleQFunctionBuildOrUpdate(CeedOperator op, CeedVector *assembled, CeedElemRestriction *rstr, CeedRequest *request) {
-  assert(assembled);
+  CeedAssert(assembled);
   return CeedOperatorLinearAssembleQFunctionBuildOrUpdate_Core(op, *assembled == NULL, true, assembled, rstr, request);
 }
 

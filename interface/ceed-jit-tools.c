@@ -125,6 +125,9 @@ static int CeedNormalizePath(Ceed ceed, const char *source_file_path, char **nor
   @ref Backend
 **/
 int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_file_path, CeedInt *num_file_paths, char ***file_paths, char **buffer) {
+#if defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE
+  return CeedError(ceed, CEED_ERROR_UNSUPPORTED, "JIT source loading is disabled in this CPU-only protected build");
+#else
   FILE *source_file;
   long  file_size, file_offset = 0;
   char *temp_buffer;
@@ -296,6 +299,7 @@ int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_file_path, C
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Final buffer:\n");
   CeedDebug(ceed, "%s\n", *buffer);
   return CEED_ERROR_SUCCESS;
+#endif
 }
 
 /**
@@ -390,9 +394,14 @@ int CeedPathConcatenate(Ceed ceed, const char *base_file_path, const char *relat
   @ref Backend
 **/
 int CeedGetJitRelativePath(const char *absolute_file_path, const char **relative_file_path) {
+#if defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE
+  *relative_file_path = NULL;
+  return CeedError(NULL, CEED_ERROR_UNSUPPORTED, "JIT source paths are disabled in this CPU-only protected build");
+#else
   *(relative_file_path) = strstr(absolute_file_path, "ceed/jit-source");
   CeedCheck(*relative_file_path, NULL, CEED_ERROR_MAJOR, "Couldn't find relative path including 'ceed/jit-source' for: %s", absolute_file_path);
   return CEED_ERROR_SUCCESS;
+#endif
 }
 
 /**

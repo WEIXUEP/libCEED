@@ -3,6 +3,7 @@
 /// \test Test diagnostic source protection and gallery QFunction evaluation
 #include <ceed.h>
 #include <ceed/backend.h>
+#include <ceed/jit-tools.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -51,6 +52,12 @@ int main(int argc, char **argv) {
     CeedCall(CeedGetJitSourceRoots(ceed, &num_roots, &roots));
 #if defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE
     if (num_roots) printf("CPU-only default JIT source root was not removed\n");
+    {
+      char *buffer = NULL;
+
+      if (CeedLoadSourceToBuffer(ceed, "unused", &buffer) != CEED_ERROR_UNSUPPORTED) printf("CPU-only JIT source loading was not disabled\n");
+      CeedCall(CeedFree(&buffer));
+    }
 #else
     if (!num_roots) printf("Default JIT source root was unexpectedly removed\n");
 #endif
