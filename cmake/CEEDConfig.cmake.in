@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+if(@CEED_WITH_CUDA@)
+  find_dependency(CUDAToolkit)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/CEEDTargets.cmake")
+check_required_components(CEED)

@@ -101,6 +101,7 @@ libCEED.includes
 
 # profiling files
 *.txt
+!CMakeLists.txt
 *.proto
 *.csv
 

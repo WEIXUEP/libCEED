@@ -1,5 +1,102 @@
 # Windows build commands
 
+## Native CMake with oneAPI, NMake or JOM
+
+This entry point uses MSVC `cl.exe` inside the Intel oneAPI environment. It does not invoke MSYS2 or GNU make. Run these commands in `cmd.exe`:
+
+```bat
+call "F:\Intel\oneAPI\setvars.bat" intel64
+cd /d K:\Project_WXP\git\libCEED
+where cl
+where cmake
+where nmake
+where jom
+```
+
+CPU Release with protection, using NMake (explicitly disable libXSMM because it is not installed on this machine):
+
+```bat
+cmake -S K:/Project_WXP/git/libCEED -B K:/Project_WXP/git/libCEED/build/cmake_cpu_nmake -G "NMake Makefiles" -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCEED_WITH_CUDA=OFF -DCEED_WITH_OPENMP=OFF -DCEED_WITH_LIBXSMM=OFF -DCEED_WITH_MAGMA=OFF -DCODE_PROTECTION=1 -DCMAKE_INSTALL_PREFIX=K:/Project_WXP/git/libCEED/build/cmake_cpu_install
+cmake --build K:/Project_WXP/git/libCEED/build/cmake_cpu_nmake
+ctest --test-dir K:/Project_WXP/git/libCEED/build/cmake_cpu_nmake --output-on-failure
+cmake --install K:/Project_WXP/git/libCEED/build/cmake_cpu_nmake
+```
+
+Output: `K:/Project_WXP/git/libCEED/build/cmake_cpu_nmake/lib/libceed.lib`. Installed library: `K:/Project_WXP/git/libCEED/build/cmake_cpu_install/lib/libceed.lib`.
+
+CUDA Debug using JOM:
+
+```bat
+set "PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin;%PATH%"
+cmake -S K:/Project_WXP/git/libCEED -B K:/Project_WXP/git/libCEED/build/cmake_gpu_jom -G "NMake Makefiles JOM" -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Debug -DCEED_WITH_CUDA=ON -DCEED_WITH_OPENMP=OFF -DCEED_WITH_LIBXSMM=OFF -DCEED_WITH_MAGMA=OFF -DCODE_PROTECTION=1 "-DCUDA_DIR=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4" -DCMAKE_CUDA_ARCHITECTURES=86 -DCMAKE_INSTALL_PREFIX=K:/Project_WXP/git/libCEED/build/cmake_gpu_install
+cmake --build K:/Project_WXP/git/libCEED/build/cmake_gpu_jom --parallel 2
+ctest --test-dir K:/Project_WXP/git/libCEED/build/cmake_gpu_jom --output-on-failure
+cmake --install K:/Project_WXP/git/libCEED/build/cmake_gpu_jom
+```
+
+Output: `K:/Project_WXP/git/libCEED/build/cmake_gpu_jom/lib/libceed.lib`. Installed library: `K:/Project_WXP/git/libCEED/build/cmake_gpu_install/lib/libceed.lib`. Debug prints effective `CODE_PROTECTION=0` and the reason. For CUDA Release, use a separate build/install directory and change the mode to `-DCMAKE_BUILD_TYPE=Release`.
+
+Both generators support CPU and CUDA; choose a new build directory when changing the generator. NMake builds serially; JOM accepts `--parallel 2`. If JOM is not on PATH, add `-DCMAKE_MAKE_PROGRAM=F:/Program_Professional/jom_1_1_7/jom.exe` when configuring JOM. Match the consumer's Debug/Release mode. `CMAKE_BUILD_TYPE` alone controls the mode: Debug selects `/MDd` and `_ITERATOR_DEBUG_LEVEL=2`; Release selects `/MD` and `_ITERATOR_DEBUG_LEVEL=0`, including CUDA host compilation. A fresh configuration defaults to Release. The native CMake build does not use `CMAKE_BUILD_TYPE_FLAG`; that parameter remains specific to the Makefile commands below.
+
+GPU architectures are controlled only by the standard `CMAKE_CUDA_ARCHITECTURES` input, for example `-DCMAKE_CUDA_ARCHITECTURES=86` or `"-DCMAKE_CUDA_ARCHITECTURES=80;86"`. CMake generates both native code and PTX for each unsuffixed value; use `"-DCMAKE_CUDA_ARCHITECTURES=80-real;86-real;86-virtual"` for native code at both architectures and PTX only at 86. The default is 86 unless `CUDAARCHS` is supplied by the environment. `CUDA_ARCH` and `CUDA_TARGETS` are not used by this CMake entry point. CUDA uses the shared runtime.
+
+Feature switches follow the Palace naming style and are grouped near the top of `CMakeLists.txt`. Dependency, build, installation, test, and configuration-printing logic remains in that single file; the files under `cmake/` are package metadata templates.
+
+| CMake parameter | Default | Dependency path | Palace equivalent |
+| --- | --- | --- | --- |
+| `CEED_WITH_LIBXSMM=ON/OFF` | ON | `XSMM_DIR` (headers in `include`, library in `lib`) | `PALACE_WITH_LIBXSMM` |
+| `CEED_WITH_CUDA=ON/OFF` | OFF | `CUDA_DIR` (CUDA toolkit root) | `PALACE_WITH_CUDA` |
+| `CEED_WITH_MAGMA=ON/OFF` | OFF | `MAGMA_DIR` (headers in `include`, library in `lib`) | `PALACE_WITH_MAGMA` |
+| `CEED_WITH_OPENMP=ON/OFF` | OFF | MSVC/oneAPI environment (`LIB`) | `PALACE_WITH_OPENMP` |
+| `BUILD_TESTING=ON/OFF` | ON | Focused CTest suite | Standard CMake option |
+| `BUILD_SHARED_LIBS=OFF` | OFF | Static library; shared builds not supported yet | Standard CMake option |
+| `CODE_PROTECTION=0/1` | 0 | Non-Debug protection | Explicit libCEED setting |
+
+In a fresh build, libXSMM is the only optional backend enabled by default; built-in ref/opt CPU backends remain available. Each `CEED_WITH_*` switch explicitly controls the corresponding feature. Providing a dependency path does not enable its backend, and old `CEED_ENABLE_CUDA`/`OPENMP` inputs are not used. Existing build directories retain their cached switches: pass `-DCEED_WITH_LIBXSMM=ON` to enable it there. Missing libXSMM is a configuration error; supply its prefix with `-DXSMM_DIR=...`, or explicitly disable it with `-DCEED_WITH_LIBXSMM=OFF`.
+
+Optional dependency prefixes are `-DXSMM_DIR=...` and `-DMAGMA_DIR=...`; when the corresponding feature is ON and no prefix is given, the search uses `CMAKE_INSTALL_PREFIX`, matching Palace's shared dependency installation. MAGMA requires CUDA, enables LLVM OpenMP, and accepts `magma.lib` or `libmagma.lib`. `-DBLAS_LIB="path/to/a.lib;path/to/b.lib"` supplies BLAS explicitly; otherwise the build searches BLAS (sequential LP64 MKL when `MKLROOT` is set). `-DCEED_WITH_OPENMP=ON` requires its import library and runtime DLL. Configuration prints the compiler, runtime, feature switches, resolved dependencies, backends, and effective protection values.
+
+For a Palace `ExternalProject` caller, arguments can be assembled as a typed CMake list, for example:
+
+```cmake
+set(CODE_PROTECTION "0" CACHE STRING "Enable libCEED Release code protection (0 or 1)")
+set_property(CACHE CODE_PROTECTION PROPERTY STRINGS 0 1)
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "CUDA architectures")
+endif()
+string(REPLACE ";" "|" LIBCEED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+
+set(LIBCEED_CMAKE_ARGS
+  "-DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_INSTALL_PREFIX}"
+  "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}"
+  "-DCMAKE_C_COMPILER:FILEPATH=${CMAKE_C_COMPILER}"
+  "-DCMAKE_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}"
+  "-DBUILD_SHARED_LIBS:BOOL=OFF"
+  "-DBUILD_TESTING:BOOL=OFF"
+  "-DCEED_WITH_CUDA:BOOL=${PALACE_WITH_CUDA}"
+  "-DCEED_WITH_OPENMP:BOOL=${PALACE_WITH_OPENMP}"
+  "-DCEED_WITH_LIBXSMM:BOOL=${PALACE_WITH_LIBXSMM}"
+  "-DCEED_WITH_MAGMA:BOOL=${PALACE_WITH_MAGMA}"
+  "-DCMAKE_CUDA_ARCHITECTURES:STRING=${LIBCEED_CUDA_ARCHITECTURES}"
+  "-DCUDA_DIR:PATH=${CUDAToolkit_LIBRARY_ROOT}"
+  "-DXSMM_DIR:PATH=${CMAKE_INSTALL_PREFIX}"
+  "-DMAGMA_DIR:PATH=${CMAKE_INSTALL_PREFIX}"
+  "-DCODE_PROTECTION:STRING=${CODE_PROTECTION}"
+)
+```
+
+Pass `-DCODE_PROTECTION=1` when configuring the parent project to request protection, or `-DCODE_PROTECTION=0` to disable it (the default). Forward this value unchanged to libCEED; libCEED determines the effective state from the build mode and backends. Release/MD enables protection when requested; Debug/MDd prints `CODE_PROTECTION=0` with the disabled reason. CPU archive and JIT metadata protection additionally require a CPU-only build.
+
+These are `CMAKE_ARGS` for a native CMake `ExternalProject`, with the generator and make program passed through its standard settings. Set `LIST_SEPARATOR "|"` in `ExternalProject_Add` so the encoded architecture list arrives as a single cache argument. Apply the same encoding when forwarding multi-value BLAS arguments. The current Palace Makefile caller must be adapted before using this list; this change does not modify the Palace repository.
+
+Installed packages provide `CEED::ceed` through `find_package(CEED CONFIG REQUIRED)`, with CUDA link dependencies and active protection definitions propagated to consumers. Set `CMAKE_PREFIX_PATH` to the installation prefix. `ceed.pc` is also installed with `-L`/`-l` dependencies. Configure the final installation prefix up front; changing only `cmake --install --prefix` will not update the compiled JIT root. Nonprotected builds search the configured installation include directory first and the source include directory second.
+
+This initial native CMake entry point covers Windows MSVC static CPU/CUDA libraries, optional CUDA MAGMA/libXSMM, installation, protection, and four basic C tests per backend. It does not replace the Makefile's HIP/SYCL, shared-library, external-example, Fortran-test, full-test-suite, documentation, or packaging targets. The Makefile remains available below. JIT source encryption and disk caching are not implemented by this build-system change.
+
+Verified on this machine using oneAPI `setvars.bat`, MSVC 14.43, and CUDA 12.4: NMake CPU Release with protection (16 CTest cases); JOM CUDA Debug (28 cases); JOM CUDA Release with LLVM OpenMP and `CMAKE_CUDA_ARCHITECTURES=80;86` (28 cases). Separate C and C++ consumers link the installed packages with `/WHOLEARCHIVE` and exercise CPU and CUDA ref/shared/gen; the CUDA consumer also verifies that JIT resolves installed headers. MAGMA/libXSMM installations are unavailable on this machine, so their full backend builds have not been validated. A fresh configuration was checked to enable only libXSMM by default and report its missing installation with instructions to set `XSMM_DIR` or explicitly disable the backend.
+
+## MSYS2 Makefile
+
 Open `cmd.exe` and run these setup commands first. oneAPI `setvars.bat` initializes the VS 2022 x64 environment; the build commands below still use MSVC and MSYS2 make.
 
 ```bat
