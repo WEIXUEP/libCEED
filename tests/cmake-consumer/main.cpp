@@ -24,10 +24,14 @@ int main(int argc, char **argv) {
 #if !defined(CEED_DISABLE_JIT_SOURCE) || !CEED_DISABLE_JIT_SOURCE
   const char *path;
   CeedCall(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/gallery/ceed-massapply.h", &path));
+#ifdef CEED_EMBEDDED_JIT
+  if (std::string(path) != "ceed/jit-source/gallery/ceed-massapply.h") return 1;
+#else
   if (CEED_TEST_INSTALL_ROOT[0] && std::string(path).find(CEED_TEST_INSTALL_ROOT) != 0) {
     std::fprintf(stderr, "JIT did not use the installed headers: %s\n", path);
     return 1;
   }
+#endif
   CeedCall(CeedFree(&path));
 #endif
   CeedCall(CeedVectorDestroy(&vector));

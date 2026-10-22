@@ -13,6 +13,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ceed-jit-source-embedded.h"
+
 /**
   @brief Check if valid file exists at path given
 
@@ -42,9 +44,21 @@ int CeedCheckFilePath(Ceed ceed, const char *source_file_path, bool *is_valid) {
     source_file_path_only = (char *)source_file_path;
   }
 
+#ifdef CEED_EMBEDDED_JIT
+  bool embedded;
+  CeedCall(CeedEmbeddedJitFind(ceed, source_file_path_only, NULL, &embedded));
+  if (embedded) {
+    *is_valid = true;
+    if (last_colon) CeedCall(CeedFree(&source_file_path_only));
+    return CEED_ERROR_SUCCESS;
+  }
+#endif
+
+#ifndef CEED_EMBEDDED_JIT
   // Debug
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Checking for source file: ");
   CeedDebug(ceed, "%s\n", source_file_path_only);
+#endif
 
   // Check for valid file path
   FILE *source_file;
@@ -52,9 +66,11 @@ int CeedCheckFilePath(Ceed ceed, const char *source_file_path, bool *is_valid) {
   *is_valid   = source_file;
 
   if (*is_valid) {
+#ifndef CEED_EMBEDDED_JIT
     // Debug
     CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Found JiT source file: ");
     CeedDebug(ceed, "%s\n", source_file_path_only);
+#endif
     fclose(source_file);
   }
 
@@ -132,11 +148,20 @@ int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_file_path, C
   long  file_size, file_offset = 0;
   char *temp_buffer;
 
+#ifndef CEED_EMBEDDED_JIT
   // Debug
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- Ceed JiT ----------\n");
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Current source file: ");
   CeedDebug(ceed, "%s\n", source_file_path);
+#endif
 
+#ifdef CEED_EMBEDDED_JIT
+  bool embedded;
+  CeedCall(CeedEmbeddedJitFind(ceed, source_file_path, &temp_buffer, &embedded));
+  if (embedded) {
+    file_size = (long)strlen(temp_buffer);
+  } else {
+#endif
   // Read file to temporary buffer
   source_file = fopen(source_file_path, "rb");
   CeedCheck(source_file, ceed, CEED_ERROR_MAJOR, "Couldn't open source file: %s", source_file_path);
@@ -161,6 +186,9 @@ int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_file_path, C
     // LCOV_EXCL_STOP
   }
   fclose(source_file);
+#ifdef CEED_EMBEDDED_JIT
+  }
+#endif
 
   // Search for headers to include
   const char *first_hash = strchr(temp_buffer, '#');
@@ -259,7 +287,9 @@ int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_file_path, C
         CeedCall(CeedNormalizePath(ceed, include_source_path, &normalized_include_source_path));
         for (CeedInt i = 0; i < *num_file_paths; i++) is_included |= !strcmp(normalized_include_source_path, (*file_paths)[i]);
         if (!is_included) {
+#ifndef CEED_EMBEDDED_JIT
           CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "JiT Including: %s\n", normalized_include_source_path);
+#endif
           CeedCall(CeedLoadSourceToInitializedBuffer(ceed, normalized_include_source_path, num_file_paths, file_paths, buffer));
           CeedCall(CeedRealloc(*num_file_paths + 1, file_paths));
           CeedCall(CeedStringAllocCopy(normalized_include_source_path, &(*file_paths)[*num_file_paths]));
@@ -292,12 +322,14 @@ int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_file_path, C
   // Cleanup
   CeedCall(CeedFree(&temp_buffer));
 
+#ifndef CEED_EMBEDDED_JIT
   // Debug
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- Ceed JiT ----------\n");
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Current source file: ");
   CeedDebug(ceed, "%s\n", source_file_path);
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Final buffer:\n");
   CeedDebug(ceed, "%s\n", *buffer);
+#endif
   return CEED_ERROR_SUCCESS;
 #endif
 }
@@ -419,18 +451,28 @@ int CeedGetJitAbsolutePath(Ceed ceed, const char *relative_file_path, const char
   const char **jit_source_dirs;
   CeedInt      num_source_dirs;
 
+#ifdef CEED_EMBEDDED_JIT
+  bool embedded;
+  CeedCall(CeedEmbeddedJitFind(ceed, relative_file_path, NULL, &embedded));
+  if (embedded) return CeedStringAllocCopy(relative_file_path, (char **)absolute_file_path);
+#endif
+
+#ifndef CEED_EMBEDDED_JIT
   // Debug
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- Ceed JiT ----------\n");
   CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Relative JiT source file: ");
   CeedDebug(ceed, "%s\n", relative_file_path);
+#endif
 
   CeedCallBackend(CeedGetJitSourceRoots(ceed, &num_source_dirs, &jit_source_dirs));
   for (CeedInt i = 0; i < num_source_dirs; i++) {
     bool is_valid;
 
+#ifndef CEED_EMBEDDED_JIT
     // Debug
     CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "Checking JiT root: ");
     CeedDebug(ceed, "%s\n", jit_source_dirs[i]);
+#endif
 
     // Build and check absolute path with current root
     CeedCall(CeedPathConcatenate(ceed, jit_source_dirs[i], relative_file_path, (char **)absolute_file_path));

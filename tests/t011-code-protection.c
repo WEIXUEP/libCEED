@@ -58,6 +58,8 @@ int main(int argc, char **argv) {
       if (CeedLoadSourceToBuffer(ceed, "unused", &buffer) != CEED_ERROR_UNSUPPORTED) printf("CPU-only JIT source loading was not disabled\n");
       CeedCall(CeedFree(&buffer));
     }
+#elif defined(CEED_EMBEDDED_JIT)
+    if (num_roots) printf("Embedded JIT retained a default filesystem root\n");
 #else
     if (!num_roots) printf("Default JIT source root was unexpectedly removed\n");
 #endif
