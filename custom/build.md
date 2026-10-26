@@ -56,14 +56,44 @@ In a fresh build, libXSMM is the only optional backend enabled by default; built
 
 Dependency inputs are `-DCEED_CUDA_DIR=...`, `-DCEED_XSMM_DIR=...`, `-DCEED_MAGMA_DIR=...`, and `-DCEED_BLAS_LIB="path/to/a.lib;path/to/b.lib"`; the old unprefixed names are not used by CMake. When libXSMM or MAGMA is ON and no prefix is given, the search uses `CMAKE_INSTALL_PREFIX`, matching Palace's shared dependency installation. MAGMA requires CUDA, enables LLVM OpenMP, and accepts `magma.lib` or `libmagma.lib`. If `CEED_BLAS_LIB` is empty, the build searches BLAS when needed (sequential LP64 MKL when `MKLROOT` is set). `-DCEED_WITH_OPENMP=ON` requires its import library and runtime DLL. Configuration prints the compiler, runtime, feature switches, resolved dependencies, backends, and effective protection values.
 
-For a Palace `ExternalProject` caller, arguments can be assembled as a typed CMake list, for example:
+### Palace ExternalProject integration
+
+`custom/ExternalLibCEED.cmake` is a complete native CMake replacement for the old Makefile caller. It keeps dependency ordering, configures in a separate build directory, and uses ExternalProject's default CMake configure/build/install steps. Use it in place of the original `ExternalLibCEED.cmake` include; do not include both because they define the same `libCEED` target. The Palace repository is not modified by this example.
+
+The parent supplies its existing `PALACE_WITH_LIBXSMM`, `PALACE_WITH_CUDA`, `PALACE_WITH_MAGMA`, `PALACE_WITH_OPENMP`, and `PALACE_CODE_PROTECTION` settings. The module maps them to `CEED_WITH_*` and `CEED_CODE_PROTECTION`, explicitly forwarding ON/OFF rather than relying on dependency auto-detection. libXSMM and MAGMA are searched under the shared installation prefix and their ExternalProject targets finish before libCEED configures. HIP is explicitly rejected by this Windows entry point.
+
+| Old make input | Native CMake input |
+| --- | --- |
+| `prefix` | `CMAKE_INSTALL_PREFIX` |
+| `CC`, `CXX`, `LINK`, `AR` | `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPILER`, `CMAKE_LINKER`, `CMAKE_AR` |
+| `OPT`, `PEDANTIC` | `CMAKE_C_FLAGS`, `CMAKE_CXX_FLAGS` and their configuration-specific variants |
+| `LDFLAGS` | `CMAKE_EXE_LINKER_FLAGS` for tests/consumers; `CMAKE_STATIC_LINKER_FLAGS` for the librarian |
+| `STATIC=1` | `BUILD_SHARED_LIBS=OFF` (the CMake entry point has no `STATIC` switch) |
+| `CMAKE_BUILD_TYPE_FLAG=MD/MDd` | `CMAKE_BUILD_TYPE=Release/Debug` |
+| `CUDA_ARCH`, `CUDA_TARGETS` | `CMAKE_CUDA_ARCHITECTURES`, including semicolon lists and real/virtual suffixes |
+| `CUDA_DIR`, `XSMM_DIR`, `MAGMA_DIR`, `BLAS_LIB` | `CEED_CUDA_DIR`, `CEED_XSMM_DIR`, `CEED_MAGMA_DIR`, `CEED_BLAS_LIB` |
+| `CODE_PROTECTION=1/0` | `CEED_CODE_PROTECTION=ON/OFF` |
+
+Keep compiler paths as typed FILEPATH values with no additional literal quotes inside the value. CMake handles spaces and escaping; do not assemble shell command strings. CUDA includes/libraries and MSVC runtime flags are supplied by libCEED's targets and build mode, so do not copy the old `-I`, `/MD`, or OpenMP flags into `OPT`. Configure OpenMP through the backend switch. Changing compiler/toolkit installations requires a fresh build directory.
+
+The module forwards normal compiler flags, the active configuration's flags, linker/librarian flags, toolchain/make paths, prefix search paths and installation directories. CUDA arguments are forwarded only when CUDA is enabled. `BLAS_LAPACK_LIBRARIES` becomes the semicolon-separated `CEED_BLAS_LIB` list. Multi-value arguments are encoded with ExternalProject's `LIST_SEPARATOR "|"`, preserving each list as one child cache value. For example, architecture `80;86` and two BLAS library paths remain lists rather than separate command-line arguments.
+
+For an already extracted checkout, set `LIBCEED_SOURCE_DIR`; no download, checkout or update is performed. Otherwise provide `EXTERN_LIBCEED_URL` and `EXTERN_LIBCEED_GIT_TAG` for the standard Git download step. The default build directory is `${CMAKE_BINARY_DIR}/extern/libCEED-build`. The module prints every forwarded cache argument, and the child prints resolved dependencies, effective flags and protection state.
+
+For example, a parent can use the local checkout directly:
 
 ```cmake
-option(CEED_CODE_PROTECTION "Enable libCEED Release code protection" OFF)
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "CUDA architectures")
-endif()
+set(LIBCEED_SOURCE_DIR "K:/Project_WXP/git/libCEED")
+include("${LIBCEED_SOURCE_DIR}/custom/ExternalLibCEED.cmake")
+```
+
+The `tests/cmake-superbuild` fixture exercises this module through a real ExternalProject. Verified here with oneAPI/MSVC: NMake CPU Release build/install and two installed-consumer tests; JOM CPU Debug build/install and two consumer tests, including `/MDd` and effective protection OFF; JOM CUDA Release build/install with `80-real;86`, LLVM OpenMP and a three-library MKL list, followed by nine consumer/cache tests. Prefixes and compiler/library paths containing spaces, custom C/C++/CUDA flags, linker/librarian flags, and both semicolon and `$<SEMICOLON>` library lists were checked. MAGMA/libXSMM full builds remain unverified because those installations are unavailable on this machine.
+
+For a smaller custom caller, the essential arguments are:
+
+```cmake
 string(REPLACE ";" "|" LIBCEED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+string(REPLACE ";" "|" LIBCEED_BLAS_LIB "${BLAS_LAPACK_LIBRARIES}")
 
 set(LIBCEED_CMAKE_ARGS
   "-DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_INSTALL_PREFIX}"
@@ -80,13 +110,14 @@ set(LIBCEED_CMAKE_ARGS
   "-DCEED_CUDA_DIR:PATH=${CUDAToolkit_LIBRARY_ROOT}"
   "-DCEED_XSMM_DIR:PATH=${CMAKE_INSTALL_PREFIX}"
   "-DCEED_MAGMA_DIR:PATH=${CMAKE_INSTALL_PREFIX}"
-  "-DCEED_CODE_PROTECTION:BOOL=${CEED_CODE_PROTECTION}"
+  "-DCEED_BLAS_LIB:STRING=${LIBCEED_BLAS_LIB}"
+  "-DCEED_CODE_PROTECTION:BOOL=${PALACE_CODE_PROTECTION}"
 )
 ```
 
-Pass `-DCEED_CODE_PROTECTION=ON` when configuring the parent project to request protection, or `-DCEED_CODE_PROTECTION=OFF` to disable it (the default). This is the only CMake protection input; the old `CODE_PROTECTION` argument is no longer used. Forward the value unchanged to libCEED as a BOOL; libCEED determines the effective state from the build mode and backends. Release/MD enables protection when requested; Debug/MDd prints `CEED_CODE_PROTECTION=OFF` with the disabled reason. CPU archive and JIT metadata protection additionally require a CPU-only build. The Makefile interface below is unchanged.
+The complete template forwards `PALACE_CODE_PROTECTION` from the parent as `CEED_CODE_PROTECTION`; when configuring libCEED directly, use `-DCEED_CODE_PROTECTION=ON/OFF`. The old `CODE_PROTECTION` argument is not used by CMake. libCEED determines the effective state from the build mode and backends. Release/MD enables protection when requested; Debug/MDd prints `CEED_CODE_PROTECTION=OFF` with the disabled reason. CPU archive and JIT metadata protection additionally require a CPU-only build. The Makefile interface below is unchanged.
 
-These are `CMAKE_ARGS` for a native CMake `ExternalProject`, with the generator and make program passed through its standard settings. Set `LIST_SEPARATOR "|"` in `ExternalProject_Add` so the encoded architecture list arrives as a single cache argument. Apply the same encoding when forwarding multi-value BLAS arguments. The current Palace Makefile caller must be adapted before using this list; this change does not modify the Palace repository.
+These are `CMAKE_ARGS` for a native CMake `ExternalProject`, with the generator inherited from the parent. Set `LIST_SEPARATOR "|"` in `ExternalProject_Add` when using the smaller argument list. Do not blank `CONFIGURE_COMMAND` or `BUILD_COMMAND`, and do not use `BUILD_IN_SOURCE TRUE`: those belonged to the old Makefile workflow. Public SDK installation and protected resource packaging are handled by libCEED's own install rules; no extra header-copy command is needed.
 
 Installed packages provide `CEED::ceed` through `find_package(CEED CONFIG REQUIRED)`, with CUDA link dependencies and active protection definitions propagated to consumers. Set `CMAKE_PREFIX_PATH` to the installation prefix. `ceed.pc` is also installed with `-L`/`-l` dependencies. Configure the final installation prefix up front; changing only `cmake --install --prefix` will not update the compiled JIT root. Nonprotected builds search the configured installation include directory first and the source include directory second.
 

@@ -32,9 +32,8 @@ endif()
 
 # Define build settings and defaults.
 option(BUILD_SHARED_LIBS "Build shared libraries (not yet supported by this entry point)" OFF)
-option(STATIC "Build a static library (Makefile compatibility)" ON)
-if(NOT STATIC OR BUILD_SHARED_LIBS)
-  message(FATAL_ERROR "The native CMake entry point currently supports static libraries (STATIC=ON).")
+if(BUILD_SHARED_LIBS)
+  message(FATAL_ERROR "The native CMake entry point currently supports static libraries; use BUILD_SHARED_LIBS=OFF.")
 endif()
 
 include(GNUInstallDirs)
@@ -85,7 +84,9 @@ if(CEED_WITH_CUDA)
   if(CEED_CUDA_DIR AND NOT CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_COMPILER "${CEED_CUDA_DIR}/bin/nvcc.exe")
   endif()
-  set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
+  if(NOT CMAKE_CUDA_HOST_COMPILER AND NOT DEFINED ENV{CUDAHOSTCXX})
+    set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
+  endif()
   set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
@@ -330,11 +331,21 @@ endif()
 # Print effective build settings.
 message(STATUS "===================== libCEED build configuration ===================")
 foreach(_var CMAKE_GENERATOR CMAKE_MAKE_PROGRAM CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_BUILD_TYPE
-    CMAKE_MSVC_RUNTIME_LIBRARY BUILD_SHARED_LIBS STATIC BUILD_TESTING
+    CMAKE_LINKER CMAKE_AR CMAKE_MSVC_RUNTIME_LIBRARY BUILD_SHARED_LIBS BUILD_TESTING
+    CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_CUDA_FLAGS CMAKE_EXE_LINKER_FLAGS CMAKE_STATIC_LINKER_FLAGS
     CEED_WITH_CUDA CEED_WITH_OPENMP CEED_WITH_LIBXSMM CEED_WITH_MAGMA
     CMAKE_CUDA_COMPILER CMAKE_CUDA_ARCHITECTURES CMAKE_CUDA_HOST_COMPILER
     CEED_OPENMP_LIBRARY CEED_CUDA_DIR CEED_XSMM_DIR CEED_MAGMA_DIR CEED_XSMM_INCLUDE_DIR CEED_XSMM_LIBRARY
-    CEED_MAGMA_INCLUDE_DIR CEED_MAGMA_LIBRARY CEED_BLAS_LIB CMAKE_INSTALL_PREFIX)
+    CEED_MAGMA_INCLUDE_DIR CEED_MAGMA_LIBRARY CEED_BLAS_LIB
+    CMAKE_INSTALL_PREFIX CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR)
+  message(STATUS "  ${_var}=${${_var}}")
+endforeach()
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _ceed_config)
+foreach(_kind C CXX CUDA EXE_LINKER STATIC_LINKER)
+  if(_kind STREQUAL "CUDA" AND NOT CEED_WITH_CUDA)
+    continue()
+  endif()
+  set(_var "CMAKE_${_kind}_FLAGS_${_ceed_config}")
   message(STATUS "  ${_var}=${${_var}}")
 endforeach()
 message(STATUS "  CEED_CODE_PROTECTION_REQUESTED=${CEED_CODE_PROTECTION}")
