@@ -34,23 +34,25 @@ int main(int argc, char **argv) {
     if (argc < 3) return 1;
     const auto directory = std::filesystem::absolute(std::filesystem::u8path(argv[2]));
     Environment("CEED_JIT_CACHE_DIR", directory.generic_u8string());
-    if (std::string(argv[1]) == "benchmark") {
+    if (std::string(argv[1]) == "benchmark" || std::string(argv[1]) == "benchmark-embedded") {
+      const bool embedded = std::string(argv[1]) == "benchmark-embedded";
       std::filesystem::create_directories(directory);
       const std::string shared(64 * 1024, ' ');
-      const char       *names[]   = {"top.h", "nested/value.h"};
+      const std::string unused(embedded ? 1024 * 1024 : 0, ' ');
+      const char       *names[]   = {"top.h", "nested/value.h", "unused.h"};
       const std::string top       = "#include \"nested/value.h\"\n" + shared;
-      const char       *headers[] = {top.c_str(), "#define VALUE 2\n"};
+      const char       *headers[] = {top.c_str(), "#define VALUE 2\n", unused.c_str()};
       {
         std::ofstream f(directory / "external.h");
         f << "#define EXTERNAL 1\n";
       }
       const std::string include = "-I" + directory.generic_u8string();
       const char       *opts[]  = {"-arch=sm_89", include.c_str()};
-      const std::string body    = "#include <top.h>\n#include <external.h>\n" + std::string(512 * 1024, ' ');
+      const std::string body    = "#include <top.h>\n#include <external.h>\n" + std::string(embedded ? 512 : 512 * 1024, ' ');
       const auto        start   = std::chrono::steady_clock::now();
       Hash              keys;
       for (int i = 0; i < 124; i++) {
-        const auto key = CeedCudaCacheKey(body + std::to_string(i), "benchmark", 2, names, headers, 2, opts);
+        const auto key = CeedCudaCacheKey(body + std::to_string(i), "benchmark", embedded ? 3 : 2, names, headers, 2, opts);
         Check(!key.empty(), "Benchmark dependencies unavailable");
         keys.Add(key);
       }
@@ -162,6 +164,24 @@ int main(int argc, char **argv) {
     const auto embedded = CeedCudaCacheKey("#include <top.h>\n", "compiler", 2, names, headers, 2, opts);
     headers[1]          = "#define VALUE 5\n";
     Check(!embedded.empty() && embedded != CeedCudaCacheKey("#include <top.h>\n", "compiler", 2, names, headers, 2, opts), "Embedded invalidation");
+    std::string mutable_header    = "#define VALUE 1\n";
+    const char *mutable_names[]   = {"unused.h"};
+    const char *mutable_sources[] = {mutable_header.c_str()};
+    auto        bundle_key        = [&]() { return CeedCudaCacheKey("kernel", "compiler", 1, mutable_names, mutable_sources, 2, opts); };
+    const auto  bundle_original   = bundle_key();
+    Check(!bundle_original.empty() && bundle_original == bundle_key(), "Embedded prefix reuse");
+    mutable_header[14]        = '2';
+    const auto bundle_changed = bundle_key();
+    Check(bundle_original != bundle_changed, "In-place unused embedded header mutation");
+    mutable_header[14] = '1';
+    Check(bundle_original == bundle_key(), "Restored embedded bundle identity");
+    std::string relocated = mutable_header;
+    mutable_sources[0]    = relocated.c_str();
+    Check(bundle_original == bundle_key(), "Relocated identical embedded bundle");
+    mutable_names[0] = "renamed.h";
+    Check(bundle_original != bundle_key(), "Embedded header name invalidation");
+    mutable_names[0] = "unused.h";
+    Check(bundle_original == bundle_key(), "Recomputed prefix differs from reused prefix");
     const char payload[] = "test PTX\n";
     CeedCudaCacheDiscard(original);
     {

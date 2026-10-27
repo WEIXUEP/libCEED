@@ -299,19 +299,65 @@ std::string CeedCudaCacheCompiler() noexcept {
   }
 }
 
+namespace {
+// SHA state after an embedded bundle is independent of each kernel. Validate the
+// bytes, not addresses/timestamps: protected bundles are decrypted anew per call.
+// Only the most recent bundle is retained, with a strict per-thread memory bound.
+Hash EmbeddedPrefix(int count, const char *const *names, const char *const *sources) {
+  struct Bundle {
+    std::vector<std::string> names, sources;
+    Hash                     prefix;
+    bool                     valid = false;
+  };
+  static thread_local Bundle previous;
+  bool                       same  = previous.valid && previous.names.size() == static_cast<size_t>(count);
+  size_t                     bytes = 0;
+  std::vector<size_t>        name_sizes(count), source_sizes(count);
+  for (int i = 0; i < count; ++i) {
+    name_sizes[i]   = std::strlen(names[i]);
+    source_sizes[i] = std::strlen(sources[i]);
+    bytes += name_sizes[i] + source_sizes[i];
+    if (same &&
+        (previous.names[i].size() != name_sizes[i] || previous.sources[i].size() != source_sizes[i] ||
+         std::memcmp(previous.names[i].data(), names[i], name_sizes[i]) || std::memcmp(previous.sources[i].data(), sources[i], source_sizes[i])))
+      same = false;
+  }
+  if (same) return previous.prefix;
+  Hash prefix;
+  // Distinct domain: earlier keys hashed the kernel before the entire bundle.
+  prefix.Add("cuda-cache-v2:embedded-prefix-v1");
+  prefix.Add(std::to_string(count));
+  for (int i = 0; i < count; ++i) {
+    prefix.Add(names[i], name_sizes[i]);
+    prefix.Add(sources[i], source_sizes[i]);
+  }
+  previous.valid = false;
+  previous.names.clear();
+  previous.sources.clear();
+  if (bytes <= 8 * 1024 * 1024 && count <= 512) {
+    for (int i = 0; i < count; ++i) {
+      previous.names.emplace_back(names[i], name_sizes[i]);
+      previous.sources.emplace_back(sources[i], source_sizes[i]);
+    }
+    previous.prefix = prefix;
+    previous.valid  = true;
+  }
+  return prefix;
+}
+}  // namespace
+
 std::string CeedCudaCacheKey(const std::string &code, const std::string &compiler, int num_headers, const char *const *names,
                              const char *const *sources, int num_opts, const char *const *opts) noexcept {
   try {
     if (compiler.empty() || CacheDirectory().empty()) return {};
     Hash hash;
-    hash.Add("cuda-cache-v2");
+    if (num_headers > 0) hash = EmbeddedPrefix(num_headers, names, sources);
+    else hash.Add("cuda-cache-v2");
     hash.Add(compiler);
     hash.Add(code);
-    hash.Add(std::to_string(num_headers));
+    if (num_headers == 0) hash.Add(std::to_string(num_headers));
     Dependencies dependencies(hash);
     for (int i = 0; i < num_headers; i++) {
-      hash.Add(names[i], std::strlen(names[i]));
-      hash.Add(sources[i], std::strlen(sources[i]));
       if (!dependencies.headers.emplace(Logical(names[i]), sources[i]).second) return {};
     }
     hash.Add(std::to_string(num_opts));
