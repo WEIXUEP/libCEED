@@ -42,16 +42,17 @@
 #endif
 
 #include "ceed-cuda-common.h"
+#include "ceed-cuda-cache.h"
 
 #ifdef CEED_EMBEDDED_JIT
 #include "../../interface/ceed-jit-source-embedded.h"
-#include "ceed-cuda-cache.h"
 
 struct CeedEmbeddedJitGuard {
   Ceed ceed;
   void *handle = nullptr;
   ~CeedEmbeddedJitGuard() { CeedEmbeddedJitClose(ceed, &handle); }
 };
+#endif
 
 struct CeedCudaJitOptionsGuard {
   const char **opts;
@@ -61,7 +62,6 @@ struct CeedCudaJitOptionsGuard {
     CeedFree(&opts);
   }
 };
-#endif
 
 #define CeedChk_Nvrtc(ceed, x)                                                                              \
   do {                                                                                                      \
@@ -218,38 +218,46 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
 
   // Get compile options
   CeedCallBackend(CeedJitGetOpts_Cuda(ceed, &opts, &num_opts));
-#ifdef CEED_EMBEDDED_JIT
-  CeedCudaJitOptionsGuard options_guard{opts, num_opts};
-#endif
-
-  // Compile kernel
-#ifndef CEED_EMBEDDED_JIT
-  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- ATTEMPTING TO COMPILE JIT SOURCE ----------\n");
-  CeedDebug(ceed, "Name:\n  %s\n", name);
-  CeedDebug(ceed, "Source:\n%s\n", code.str().c_str());
-  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- END OF JIT SOURCE ----------\n");
-#endif
 
   if (!using_clang) {
+    CeedCudaJitOptionsGuard options_guard{opts, num_opts};
+    int num_headers = 0;
+    const char **headers = nullptr, **header_names = nullptr;
 #ifdef CEED_EMBEDDED_JIT
     CeedEmbeddedJitGuard embedded{ceed};
-    int num_headers;
-    const char **headers, **header_names;
     CeedCallBackend(CeedEmbeddedJitOpen(ceed, &num_headers, &header_names, &headers, &embedded.handle));
-    int nvrtc_major, nvrtc_minor, driver_version;
-    CeedCallNvrtc(ceed, nvrtcVersion(&nvrtc_major, &nvrtc_minor));
-    CeedCallCuda(ceed, cuDriverGetVersion(&driver_version));
-    const auto compiler = "nvrtc-v1:" + std::to_string(nvrtc_major) + ":" + std::to_string(nvrtc_minor) + ":" +
-                          std::to_string(driver_version) + ":" + std::to_string(CUDA_VERSION);
-    const auto cache_key = CeedCudaCacheKey(code.str(), compiler, num_headers, header_names, headers, num_opts, opts);
-    std::vector<char> cached_binary;
-    if (CeedCudaCacheLoad(cache_key, cached_binary) && cuModuleLoadData(module, cached_binary.data()) == CUDA_SUCCESS) {
-      *is_compile_good = true;
-      CeedDebug(ceed, "Protected CUDA JIT cache hit\n");
-      return CEED_ERROR_SUCCESS;
+#endif
+    const bool cache_enabled = CeedCudaCacheEnabled();
+    const auto compiler = cache_enabled ? CeedCudaCacheCompiler() : std::string();
+    const auto cache_key = cache_enabled ? CeedCudaCacheKey(code.str(), compiler, num_headers, header_names, headers, num_opts, opts) : std::string();
+    if (!cache_key.empty()) {
+      std::vector<char> cached_binary;
+      const auto read = CeedCudaCacheLoad(cache_key, cached_binary);
+      if (read == CeedCudaCacheRead::valid) {
+        CUmodule cached_module = nullptr;
+        if (cuModuleLoadData(&cached_module, cached_binary.data()) == CUDA_SUCCESS) {
+          *module = cached_module;
+          *is_compile_good = true;
+          CeedDebug(ceed, "CUDA JIT cache hit\n");
+          return CEED_ERROR_SUCCESS;
+        }
+      }
+      if (read != CeedCudaCacheRead::missing) {
+        CeedDebug(ceed, "CUDA JIT cache rejected; compiling normally\n");
+        CeedCudaCacheDiscard(cache_key);
+      }
+      CeedDebug(ceed, "CUDA JIT cache miss\n");
+    } else if (cache_enabled) {
+      CeedDebug(ceed, "CUDA JIT cache unavailable (unverified dependencies or cache/compiler identity unavailable)\n");
     }
-    CeedDebug(ceed, cache_key.empty() ? "Protected CUDA JIT cache unavailable (disabled or unverified dependencies)\n"
-                                    : "Protected CUDA JIT cache miss\n");
+    // Emit the compile marker only when actually invoking NVRTC, never on a hit.
+    CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- ATTEMPTING TO COMPILE JIT SOURCE ----------\n");
+#ifndef CEED_EMBEDDED_JIT
+    CeedDebug(ceed, "Name:\n  %s\n", name);
+    CeedDebug(ceed, "Source:\n%s\n", code.str().c_str());
+    CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- END OF JIT SOURCE ----------\n");
+#endif
+#ifdef CEED_EMBEDDED_JIT
     CeedCallNvrtc(ceed, nvrtcCreateProgram(&prog, code.str().c_str(), "kernel", num_headers, headers, header_names));
 #else
     CeedCallNvrtc(ceed, nvrtcCreateProgram(&prog, code.str().c_str(), NULL, 0, NULL, NULL));
@@ -266,11 +274,6 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
     }
 #endif
     nvrtcResult result = nvrtcCompileProgram(prog, num_opts, opts);
-
-#ifndef CEED_EMBEDDED_JIT
-    for (CeedInt i = 0; i < num_opts; i++) CeedCallBackend(CeedFree(&opts[i]));
-    CeedCallBackend(CeedFree(&opts));
-#endif
 
     *is_compile_good = result == NVRTC_SUCCESS;
     if (!*is_compile_good) {
@@ -312,14 +315,26 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
 #endif
     CeedCallNvrtc(ceed, nvrtcDestroyProgram(&prog));
     CeedCallCuda(ceed, cuModuleLoadData(module, ptx));
-#ifdef CEED_EMBEDDED_JIT
     // Do not publish a result if application headers changed while NVRTC was reading them.
-    if (!cache_key.empty() && cache_key == CeedCudaCacheKey(code.str(), compiler, num_headers, header_names, headers, num_opts, opts))
-      CeedCudaCacheStore(cache_key, ptx, ptx_size);
-#endif
+    if (!cache_key.empty() && cache_key == CeedCudaCacheKey(code.str(), compiler, num_headers, header_names, headers, num_opts, opts)) {
+      const auto written = CeedCudaCacheStore(cache_key, ptx, ptx_size);
+      if (written == CeedCudaCacheWrite::stored) {
+        CeedDebug(ceed, "CUDA JIT cache stored (%zu bytes)\n", ptx_size);
+      } else if (written == CeedCudaCacheWrite::failed) {
+        CeedDebug(ceed, "CUDA JIT cache write failed; continuing without persistence\n");
+      } else if (written == CeedCudaCacheWrite::oversized) {
+        CeedDebug(ceed, "CUDA JIT cache skipped (entry exceeds 8 MiB)\n");
+      }
+    }
     CeedCallBackend(CeedFree(&ptx));
     return CEED_ERROR_SUCCESS;
   } else {
+#ifndef CEED_EMBEDDED_JIT
+    CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- ATTEMPTING TO COMPILE JIT SOURCE ----------\n");
+    CeedDebug(ceed, "Name:\n  %s\n", name);
+    CeedDebug(ceed, "Source:\n%s\n", code.str().c_str());
+    CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- END OF JIT SOURCE ----------\n");
+#endif
     srand(time(NULL));
     const int             build_id = rand();
     struct cudaDeviceProp prop;

@@ -38,27 +38,30 @@ int main(int argc, char **argv) {
   const CeedInt       strides[3] = {1, 4, 4};
   const auto          location   = header.generic_u8string() + ":ExternalScale";
   CeedCall(CeedInit(argv[1], &ceed));
-  CeedCall(CeedQFunctionCreateInterior(ceed, 1, HostScale, location.c_str(), &qf));
-  CeedCall(CeedQFunctionAddInput(qf, "u", 1, CEED_EVAL_NONE));
-  CeedCall(CeedQFunctionAddOutput(qf, "v", 1, CEED_EVAL_NONE));
-  CeedCall(CeedElemRestrictionCreateStrided(ceed, 1, 4, 1, 4, strides, &restriction));
-  CeedCall(CeedOperatorCreate(ceed, qf, CEED_QFUNCTION_NONE, CEED_QFUNCTION_NONE, &op));
-  CeedCall(CeedOperatorSetField(op, "u", restriction, CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
-  CeedCall(CeedOperatorSetField(op, "v", restriction, CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
-  CeedCall(CeedVectorCreate(ceed, 4, &input));
-  CeedCall(CeedVectorCreate(ceed, 4, &output));
-  CeedCall(CeedVectorSetValue(input, 3));
-  CeedCall(CeedOperatorApply(op, input, output, CEED_REQUEST_IMMEDIATE));
-  const CeedScalar *values;
-  CeedCall(CeedVectorGetArrayRead(output, CEED_MEM_HOST, &values));
-  for (int i = 0; i < 4; i++)
-    if (values[i] != std::atoi(argv[3])) return 1;
-  CeedCall(CeedVectorRestoreArrayRead(output, &values));
-  CeedCall(CeedVectorDestroy(&input));
-  CeedCall(CeedVectorDestroy(&output));
-  CeedCall(CeedOperatorDestroy(&op));
-  CeedCall(CeedElemRestrictionDestroy(&restriction));
-  CeedCall(CeedQFunctionDestroy(&qf));
+  const int instances = argc > 4 ? std::atoi(argv[4]) : 1;
+  for (int instance = 0; instance < instances; instance++) {
+    CeedCall(CeedQFunctionCreateInterior(ceed, 1, HostScale, location.c_str(), &qf));
+    CeedCall(CeedQFunctionAddInput(qf, "u", 1, CEED_EVAL_NONE));
+    CeedCall(CeedQFunctionAddOutput(qf, "v", 1, CEED_EVAL_NONE));
+    CeedCall(CeedElemRestrictionCreateStrided(ceed, 1, 4, 1, 4, strides, &restriction));
+    CeedCall(CeedOperatorCreate(ceed, qf, CEED_QFUNCTION_NONE, CEED_QFUNCTION_NONE, &op));
+    CeedCall(CeedOperatorSetField(op, "u", restriction, CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
+    CeedCall(CeedOperatorSetField(op, "v", restriction, CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
+    CeedCall(CeedVectorCreate(ceed, 4, &input));
+    CeedCall(CeedVectorCreate(ceed, 4, &output));
+    CeedCall(CeedVectorSetValue(input, 3));
+    CeedCall(CeedOperatorApply(op, input, output, CEED_REQUEST_IMMEDIATE));
+    const CeedScalar *values;
+    CeedCall(CeedVectorGetArrayRead(output, CEED_MEM_HOST, &values));
+    for (int i = 0; i < 4; i++)
+      if (values[i] != std::atoi(argv[3])) return 1;
+    CeedCall(CeedVectorRestoreArrayRead(output, &values));
+    CeedCall(CeedVectorDestroy(&input));
+    CeedCall(CeedVectorDestroy(&output));
+    CeedCall(CeedOperatorDestroy(&op));
+    CeedCall(CeedElemRestrictionDestroy(&restriction));
+    CeedCall(CeedQFunctionDestroy(&qf));
+  }
   CeedCall(CeedDestroy(&ceed));
   return 0;
 }

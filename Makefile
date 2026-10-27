@@ -433,6 +433,8 @@ $(libceed.so) : CEED_LDFLAGS += $(if $(DARWIN), -install_name @rpath/$(notdir $(
 libceed.c := $(filter-out interface/ceed-cuda.c interface/ceed-hip.c interface/ceed-jit-source-root-$(if $(for_install),default,install).c, $(wildcard interface/ceed*.c backends/*.c gallery/*.c))
 ifeq ($(IS_MSVC),1)
   libceed.c := $(filter-out backends/ceed-backend-weak.c gallery/ceed-gallery-weak.c,$(libceed.c))
+else
+  libceed.c += $(wildcard backends/weak/*.c)
 endif
 gallery.c := $(wildcard gallery/*/ceed*.c)
 libceed.c += $(gallery.c)
@@ -702,6 +704,9 @@ ifneq ($(CUDA_LIB_DIR),)
   CPPFLAGS += $(if $(filter 1,$(IS_MSVC)),-DCEED_BUILD_CUDA)
   $(libceeds) : CPPFLAGS += -I"$(CUDA_DIR)/include"
   PKG_LIBS += -L$(abspath $(CUDA_LIB_DIR)) -lcudart -lnvrtc -lcuda -lcublas
+  ifneq ($(IS_MSVC),1)
+    PKG_LIBS += -ldl
+  endif
   PKG_STUBS_LIBS += -L$(CUDA_LIB_DIR_STUBS)
   LIBCEED_CONTAINS_CXX = 1
   libceed.c     += interface/ceed-cuda.c
@@ -930,7 +935,11 @@ else
 endif
 
 $(OBJDIR)/%.o : $(CURDIR)/%.cu | $$(@D)/.DIR
+ifeq ($(IS_MSVC),1)
 	MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' $(NVCC) $(filter-out -Wno-unused-function, $(CPPFLAGS)) $(NVCCFLAGS) -c -o $@ "$(shell cygpath -w '$<')"
+else
+	$(call quiet,NVCC) $(filter-out -Wno-unused-function, $(CPPFLAGS)) $(NVCCFLAGS) -c -o $@ $(abspath $<)
+endif
 
 $(OBJDIR)/%.o : $(CURDIR)/%.hip.cpp | $$(@D)/.DIR
 	$(call quiet,HIPCC) $(CPPFLAGS) $(HIPCCFLAGS) -c -o $@ $(abspath $<)

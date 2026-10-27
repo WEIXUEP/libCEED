@@ -25,10 +25,15 @@ foreach(_target consumer-c consumer-cxx)
   endforeach()
 endforeach()
 
-option(CEED_TEST_EMBEDDED_JIT "Test protected CUDA JIT process reuse and dependency changes" OFF)
-if(CEED_TEST_EMBEDDED_JIT)
+option(CEED_TEST_EMBEDDED_JIT "Also verify that protected CUDA JIT does not print source" OFF)
+option(CEED_TEST_CUDA_JIT_CACHE "Test CUDA JIT process reuse and dependency changes" OFF)
+if(CEED_TEST_EMBEDDED_JIT OR CEED_TEST_CUDA_JIT_CACHE)
+  add_executable(consumer-cache-tests ../cuda-jit-cache.cpp)
+  target_compile_features(consumer-cache-tests PRIVATE cxx_std_17)
+  target_link_libraries(consumer-cache-tests PRIVATE CEED::ceed)
   find_program(CEED_TEST_POWERSHELL powershell REQUIRED)
   add_test(NAME consumer-jit-cache
     COMMAND "${CEED_TEST_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/verify-jit-cache.ps1"
-      -Probe "$<TARGET_FILE:consumer-external-jit>" -WorkDir "${CMAKE_CURRENT_BINARY_DIR}/jit-cache-tests")
+      -Probe "$<TARGET_FILE:consumer-external-jit>" -WorkDir "${CMAKE_CURRENT_BINARY_DIR}/jit-cache-tests"
+      -Protected "${CEED_TEST_EMBEDDED_JIT}" -CacheProbe "$<TARGET_FILE:consumer-cache-tests>")
 endif()

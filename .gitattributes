@@ -1,0 +1,1 @@
+tests/verify-cuda-jit-cache.sh text eol=lf

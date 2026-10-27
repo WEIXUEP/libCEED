@@ -314,6 +314,15 @@ install(FILES
 
 # Configure the focused CTest suite.
 if(BUILD_TESTING)
+  if(CEED_WITH_CUDA)
+    add_executable(cuda-jit-cache-benchmark tests/cuda-jit-cache-benchmark.cpp)
+    target_compile_features(cuda-jit-cache-benchmark PRIVATE cxx_std_11)
+    target_link_libraries(cuda-jit-cache-benchmark PRIVATE ceed)
+    add_executable(cuda-jit-cache-tests tests/cuda-jit-cache.cpp)
+    target_compile_features(cuda-jit-cache-tests PRIVATE cxx_std_17)
+    target_link_libraries(cuda-jit-cache-tests PRIVATE ceed)
+    add_test(NAME cuda-jit-cache-tests COMMAND cuda-jit-cache-tests unit "${PROJECT_BINARY_DIR}/cache-unit-tests")
+  endif()
   # Focused, MSVC-compatible tests; the full Makefile suite includes C VLAs.
   foreach(_test t000-ceed t001-ceed t010-config t011-code-protection)
     add_executable(${_test} "tests/${_test}.c")
@@ -362,6 +371,8 @@ foreach(_var CODE_PROTECTION_ACTIVE PROTECT_CPU_JIT PROTECT_CPU_ARCHIVE PROTECT_
 endforeach()
 if(PROTECT_GPU_JIT)
   message(STATUS "  GPU_JIT_SOURCE=AES-256-GCM embedded resources; NVRTC only; application sources remain external")
+endif()
+if(CEED_WITH_CUDA)
   message(STATUS "  GPU_JIT_CACHE=ON (per-user binary cache; CEED_JIT_CACHE=OFF disables reuse)")
 endif()
 message(STATUS "  BACKENDS=${_ceed_backends}")
