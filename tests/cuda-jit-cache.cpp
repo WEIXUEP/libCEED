@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 // Private cache tests; not installed or part of the public API.
 #include "../backends/cuda/ceed-cuda-cache-hash.h"
+#include "../backends/cuda/ceed-cuda-cache-source.h"
 #include "../backends/cuda/ceed-cuda-cache.h"
 
 #include <chrono>
@@ -33,6 +34,30 @@ int main(int argc, char **argv) {
     if (argc < 3) return 1;
     const auto directory = std::filesystem::absolute(std::filesystem::u8path(argv[2]));
     Environment("CEED_JIT_CACHE_DIR", directory.generic_u8string());
+    if (std::string(argv[1]) == "benchmark") {
+      std::filesystem::create_directories(directory);
+      const std::string shared(64 * 1024, ' ');
+      const char       *names[]   = {"top.h", "nested/value.h"};
+      const std::string top       = "#include \"nested/value.h\"\n" + shared;
+      const char       *headers[] = {top.c_str(), "#define VALUE 2\n"};
+      {
+        std::ofstream f(directory / "external.h");
+        f << "#define EXTERNAL 1\n";
+      }
+      const std::string include = "-I" + directory.generic_u8string();
+      const char       *opts[]  = {"-arch=sm_89", include.c_str()};
+      const std::string body    = "#include <top.h>\n#include <external.h>\n" + std::string(512 * 1024, ' ');
+      const auto        start   = std::chrono::steady_clock::now();
+      Hash              keys;
+      for (int i = 0; i < 124; i++) {
+        const auto key = CeedCudaCacheKey(body + std::to_string(i), "benchmark", 2, names, headers, 2, opts);
+        Check(!key.empty(), "Benchmark dependencies unavailable");
+        keys.Add(key);
+      }
+      std::cout << "keys=124 elapsed_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
+                << " key_digest=" << Hex(keys.Finish()) << "\n";
+      return 0;
+    }
     if (std::string(argv[1]) == "poison") {
       const char invalid[] = "not a CUDA module\n";
       for (const auto &entry : std::filesystem::directory_iterator(directory)) {
@@ -59,6 +84,22 @@ int main(int argc, char **argv) {
     b.Add("a");
     b.Add("bc");
     Check(a.Finish() != b.Finish(), "Field boundaries");
+    auto parse = [](const std::string &text) { return ceed_cuda_cache::ParseIncludes(text.data(), text.size()); };
+    for (const auto text :
+         {"#include \"a.h\"\n", " /* prefix */ # include/* gap */\"a.h\" // suffix\n", "#inc\\\nlude \"a.h\"\n", "#inc\\\r\nlude \\\r\n\"a.h\"\n",
+          "/* first\nlast */ #include \"a.h\"\n", "\357\273\277#include \"a.h\"\n", "const char *s = \"/* // #include fake */\";\n#include \"a.h\"\n",
+          "// ignored\\\n#include \"ignored.h\"\n#include \"a.h\"\n"}) {
+      const auto parsed = parse(text);
+      Check(parsed.safe && parsed.entries.size() == 1 && parsed.entries[0].name == "a.h" && parsed.entries[0].quoted,
+            "Literal include/comment/splice parsing");
+    }
+    for (const auto text : {"#include MACRO\n", "#include_next <a.h>\n", "#include \"a.h\" trailing\n", "__TI\\\nME__", "__has_include(<x>)",
+                            "R\"(raw)\"", "#include <a/**/b.h>\n"}) {
+      Check(!parse(text).safe, "Unverified preprocessing accepted");
+    }
+    Check(parse("/* #include \"fake\" */\nconst char *s = \"#include <fake>\";\n").entries.empty(), "False include");
+    const auto angle = parse("#include <a.h> // trailing comment\n#define COMPARE(x) ((x) < 1) /* unrelated comment */\n");
+    Check(angle.safe && angle.entries.size() == 1 && !angle.entries[0].quoted, "Angle include/trailing comment");
     const char *opts[] = {"-arch=sm_80", "-DCOEFFICIENT=2"};
     auto        key    = [&](const std::string &code, const std::string &compiler = "toolchain-driver-format-v1") {
       return CeedCudaCacheKey(code, compiler, 0, nullptr, nullptr, 2, opts);
@@ -87,6 +128,32 @@ int main(int argc, char **argv) {
       f << "#define VALUE 3\n";
     }
     Check(!old_header.empty() && old_header != key(source), "Header-content invalidation");
+    {
+      std::ofstream f(directory / "a.h");
+      f << "#define CHILD 1\n";
+    }
+    {
+      std::ofstream f(directory / "b.h");
+      f << "#define CHILD 2\n";
+    }
+    {
+      std::ofstream f(header);
+      f << "#include \"a.h\"\n";
+    }
+    const auto old_graph = key(source);
+    const auto timestamp = std::filesystem::last_write_time(header);
+    {
+      std::ofstream f(header);
+      f << "#include \"b.h\"\n";
+    }
+    std::filesystem::last_write_time(header, timestamp);
+    const auto new_graph = key(source);
+    Check(!new_graph.empty() && new_graph != old_graph, "Same-size same-timestamp header change");
+    {
+      std::ofstream f(directory / "b.h");
+      f << "#define CHILD 3\n";
+    }
+    Check(new_graph != key(source), "Memoized dependency graph was stale");
     Check(key("#include SOME_MACRO\n").empty() && key("__TIME__").empty(), "Unsafe dependencies accepted");
     const char *names[]   = {"top.h", "nested/value.h"};
     const char *headers[] = {"#include \"nested/../nested/value.h\"\n", "#define VALUE 3\n"};

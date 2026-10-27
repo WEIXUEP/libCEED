@@ -31,6 +31,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -60,6 +61,33 @@ struct CeedCudaJitOptionsGuard {
   ~CeedCudaJitOptionsGuard() {
     for (int i = 0; i < count; i++) CeedFree(&opts[i]);
     CeedFree(&opts);
+  }
+};
+
+// Opt-in diagnostics: no clocks or cache messages when CEED_DEBUG/cache is disabled.
+struct CeedCudaCacheTiming {
+  using Clock = std::chrono::steady_clock;
+  Ceed ceed;
+  bool enabled;
+  size_t source_bytes;
+  Clock::time_point begin, last;
+  const char *status = "unavailable";
+  double prepare = 0, key = 0, read = 0, module = 0, nvrtc = 0, publish = 0;
+  CeedCudaCacheTiming(Ceed ceed, bool enabled, size_t source_bytes, Clock::time_point begin)
+      : ceed(ceed), enabled(enabled), source_bytes(source_bytes), begin(begin), last(begin) {}
+  void Start() { if (enabled) last = Clock::now(); }
+  void Mark(double &value) {
+    if (!enabled) return;
+    const auto now = Clock::now();
+    value = std::chrono::duration<double, std::milli>(now - last).count();
+    last = now;
+  }
+  ~CeedCudaCacheTiming() {
+    if (enabled) {
+      const double total = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+      CeedDebug(ceed, "CUDA JIT cache timing: status=%s source_bytes=%zu prepare_ms=%.3f key_ms=%.3f read_ms=%.3f module_ms=%.3f nvrtc_ms=%.3f publish_ms=%.3f total_ms=%.3f\n",
+                status, source_bytes, prepare, key, read, module, nvrtc, publish, total);
+    }
   }
 };
 
@@ -185,6 +213,9 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
   nvrtcProgram       prog;
   std::ostringstream code;
 
+  const bool profile = CeedDebugFlag(ceed) && CeedCudaCacheEnabled();
+  const auto jit_begin = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+
   // Make sure a Context exists for nvrtc
   cudaFree(0);
 
@@ -213,13 +244,16 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
   // Standard libCEED definitions for CUDA backends
   code << "#include <ceed/jit-source/cuda/cuda-jit.h>\n\n";
 
-  // Add string source argument provided in call
+  // Add string source argument provided in call; materialize only once.
   code << source;
+  const std::string code_str = code.str();
 
   // Get compile options
   CeedCallBackend(CeedJitGetOpts_Cuda(ceed, &opts, &num_opts));
 
   if (!using_clang) {
+    const bool cache_enabled = CeedCudaCacheEnabled();
+    CeedCudaCacheTiming timing(ceed, cache_enabled && profile, code_str.size(), jit_begin);
     CeedCudaJitOptionsGuard options_guard{opts, num_opts};
     int num_headers = 0;
     const char **headers = nullptr, **header_names = nullptr;
@@ -227,15 +261,21 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
     CeedEmbeddedJitGuard embedded{ceed};
     CeedCallBackend(CeedEmbeddedJitOpen(ceed, &num_headers, &header_names, &headers, &embedded.handle));
 #endif
-    const bool cache_enabled = CeedCudaCacheEnabled();
     const auto compiler = cache_enabled ? CeedCudaCacheCompiler() : std::string();
-    const auto cache_key = cache_enabled ? CeedCudaCacheKey(code.str(), compiler, num_headers, header_names, headers, num_opts, opts) : std::string();
+    timing.Mark(timing.prepare);
+    const auto cache_key = cache_enabled ? CeedCudaCacheKey(code_str, compiler, num_headers, header_names, headers, num_opts, opts) : std::string();
+    timing.Mark(timing.key);
     if (!cache_key.empty()) {
+      timing.status = "miss";
       std::vector<char> cached_binary;
       const auto read = CeedCudaCacheLoad(cache_key, cached_binary);
+      timing.Mark(timing.read);
       if (read == CeedCudaCacheRead::valid) {
         CUmodule cached_module = nullptr;
-        if (cuModuleLoadData(&cached_module, cached_binary.data()) == CUDA_SUCCESS) {
+        const auto loaded = cuModuleLoadData(&cached_module, cached_binary.data());
+        timing.Mark(timing.module);
+        if (loaded == CUDA_SUCCESS) {
+          timing.status = "hit";
           *module = cached_module;
           *is_compile_good = true;
           CeedDebug(ceed, "CUDA JIT cache hit\n");
@@ -243,6 +283,7 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
         }
       }
       if (read != CeedCudaCacheRead::missing) {
+        timing.status = "rejected";
         CeedDebug(ceed, "CUDA JIT cache rejected; compiling normally\n");
         CeedCudaCacheDiscard(cache_key);
       }
@@ -254,13 +295,13 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
     CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- ATTEMPTING TO COMPILE JIT SOURCE ----------\n");
 #ifndef CEED_EMBEDDED_JIT
     CeedDebug(ceed, "Name:\n  %s\n", name);
-    CeedDebug(ceed, "Source:\n%s\n", code.str().c_str());
+    CeedDebug(ceed, "Source:\n%s\n", code_str.c_str());
     CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- END OF JIT SOURCE ----------\n");
 #endif
 #ifdef CEED_EMBEDDED_JIT
-    CeedCallNvrtc(ceed, nvrtcCreateProgram(&prog, code.str().c_str(), "kernel", num_headers, headers, header_names));
+    CeedCallNvrtc(ceed, nvrtcCreateProgram(&prog, code_str.c_str(), "kernel", num_headers, headers, header_names));
 #else
-    CeedCallNvrtc(ceed, nvrtcCreateProgram(&prog, code.str().c_str(), NULL, 0, NULL, NULL));
+    CeedCallNvrtc(ceed, nvrtcCreateProgram(&prog, code_str.c_str(), NULL, 0, NULL, NULL));
 #endif
 
 #ifndef CEED_EMBEDDED_JIT
@@ -273,7 +314,9 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
       // LCOV_EXCL_STOP
     }
 #endif
+    timing.Start();
     nvrtcResult result = nvrtcCompileProgram(prog, num_opts, opts);
+    timing.Mark(timing.nvrtc);
 
     *is_compile_good = result == NVRTC_SUCCESS;
     if (!*is_compile_good) {
@@ -315,8 +358,9 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
 #endif
     CeedCallNvrtc(ceed, nvrtcDestroyProgram(&prog));
     CeedCallCuda(ceed, cuModuleLoadData(module, ptx));
+    timing.Start();
     // Do not publish a result if application headers changed while NVRTC was reading them.
-    if (!cache_key.empty() && cache_key == CeedCudaCacheKey(code.str(), compiler, num_headers, header_names, headers, num_opts, opts)) {
+    if (!cache_key.empty() && cache_key == CeedCudaCacheKey(code_str, compiler, num_headers, header_names, headers, num_opts, opts)) {
       const auto written = CeedCudaCacheStore(cache_key, ptx, ptx_size);
       if (written == CeedCudaCacheWrite::stored) {
         CeedDebug(ceed, "CUDA JIT cache stored (%zu bytes)\n", ptx_size);
@@ -326,13 +370,14 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
         CeedDebug(ceed, "CUDA JIT cache skipped (entry exceeds 8 MiB)\n");
       }
     }
+    timing.Mark(timing.publish);
     CeedCallBackend(CeedFree(&ptx));
     return CEED_ERROR_SUCCESS;
   } else {
 #ifndef CEED_EMBEDDED_JIT
     CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- ATTEMPTING TO COMPILE JIT SOURCE ----------\n");
     CeedDebug(ceed, "Name:\n  %s\n", name);
-    CeedDebug(ceed, "Source:\n%s\n", code.str().c_str());
+    CeedDebug(ceed, "Source:\n%s\n", code_str.c_str());
     CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "---------- END OF JIT SOURCE ----------\n");
 #endif
     srand(time(NULL));
@@ -364,7 +409,7 @@ static int CeedCompileCore_Cuda(Ceed ceed, const char *source, const char *name,
       FILE       *file     = fopen(filename.c_str(), "w");
 
       CeedCheck(file, ceed, CEED_ERROR_BACKEND, "Failed to create file. Write access is required for cuda-clang");
-      fputs(code.str().c_str(), file);
+      fputs(code_str.c_str(), file);
       fclose(file);
     }
 

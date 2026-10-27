@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 #include "ceed-cuda-cache.h"
 #include "ceed-cuda-cache-hash.h"
+#include "ceed-cuda-cache-source.h"
 
 #include <cuda.h>
 #include <nvrtc.h>
@@ -65,8 +66,12 @@ bool  Directory(const Path &p) {
 Path Absolute(const Path &p) {
   const DWORD attributes = GetFileAttributesW(p.c_str());
   if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return {};
-  std::vector<wchar_t> buffer(32768);
-  const DWORD          n = GetFullPathNameW(p.c_str(), static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+  std::vector<wchar_t> buffer(512);
+  DWORD                n = GetFullPathNameW(p.c_str(), static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+  if (n >= buffer.size()) {
+    buffer.resize(n + 1);
+    n = GetFullPathNameW(p.c_str(), static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+  }
   return n && n < buffer.size() ? Path(buffer.data(), n) : Path();
 }
 #else
@@ -183,14 +188,28 @@ std::string ModuleIdentity(const void *address) {
 // Scan conservatively: all literal includes, even inactive branches, contribute.
 // Unknown preprocessing constructs bypass caching rather than risk a stale hit.
 struct Dependencies {
-  Hash                              &hash;
-  std::map<std::string, std::string> headers;
-  std::vector<Path>                  roots;
-  std::vector<Path>                  parents;
-  std::set<std::string>              visited;
-  std::set<std::string>              active;
+  Hash                               &hash;
+  std::map<std::string, const char *> headers;
+  std::vector<Path>                   roots;
+  std::vector<Path>                   parents;
+  std::set<std::string>               visited;
+  std::set<std::string>               active;
+  std::map<Path, Path>                paths;
+  std::map<Path, std::string>         files;
   explicit Dependencies(Hash &h) : hash(h) {}
-  bool Include(const std::string &name, bool quoted, const std::string &origin, int depth) {
+  const Path &Resolve(const Path &path) {
+    const auto found = paths.find(path);
+    return found == paths.end() ? paths.emplace(path, Absolute(path)).first->second : found->second;
+  }
+  const std::string *Contents(const Path &path) {
+    const auto entry = files.emplace(path, std::string());
+    if (entry.second && !Read(path, entry.first->second, 16 * 1024 * 1024)) {
+      files.erase(entry.first);
+      return nullptr;
+    }
+    return &entry.first->second;
+  }
+  bool Include(const std::string &name, bool quoted, int depth) {
     if (depth > 64 || visited.size() >= 512) return false;
     bool              found = false;
     std::vector<Path> candidates;
@@ -201,31 +220,33 @@ struct Dependencies {
     for (const auto &root : roots) candidates.push_back(Join(root, Native(name)));
     // Hash every candidate that could be chosen, avoiding assumptions about NVRTC's
     // embedded/disk search precedence. Adding a shadowing header changes the key.
+    std::string context;
+    for (const auto &parent : parents) context += Utf8(parent) + "\n";
+    std::set<Path> distinct;
     for (const auto &candidate : candidates) {
-      std::string context;
-      for (const auto &parent : parents) context += Utf8(parent) + "\n";
+      if (!distinct.insert(candidate).second) continue;
       const auto embedded = headers.find(Logical(Utf8(candidate)));
       if (embedded != headers.end()) {
         found               = true;
         const auto identity = "embedded:" + embedded->first;
         if (!active.count(identity) && visited.insert(identity + context).second) {
           active.insert(identity);
-          const bool good = Scan(embedded->second, embedded->first, depth + 1);
+          const bool good = Scan(embedded->second, std::strlen(embedded->second), embedded->first, depth + 1, identity);
           active.erase(identity);
           if (!good) return false;
         }
       }
-      const auto path = Absolute(candidate);
+      const auto &path = Resolve(candidate);
       if (path.empty()) continue;
       found               = true;
       const auto identity = "file:" + Utf8(candidate) + ":" + Utf8(path);
       if (active.count(identity) || !visited.insert(identity + context).second) continue;
-      std::string source;
-      if (!Read(path, source, 16 * 1024 * 1024)) return false;
+      const auto *source = Contents(path);
+      if (!source) return false;
       hash.Add(identity);
-      hash.Add(source);
+      hash.Add(*source);
       active.insert(identity);
-      const bool good = Scan(source, Utf8(path), depth + 1);
+      const bool good = Scan(source->data(), source->size(), Utf8(path), depth + 1, "file:" + Utf8(path));
       active.erase(identity);
       if (!good) return false;
     }
@@ -234,72 +255,16 @@ struct Dependencies {
     static const std::set<std::string> builtins = {"stddef.h", "stdint.h", "stdbool.h", "math.h", "float.h", "limits.h"};
     return !quoted && builtins.count(name);
   }
-  bool Scan(const std::string &source, const std::string &origin, int depth) {
+  bool Scan(const char *source, size_t size, const std::string &origin, int depth, const std::string &identity = "") {
     struct ParentGuard {
       std::vector<Path> &stack;
       ParentGuard(std::vector<Path> &stack, const Path &path) : stack(stack) { stack.push_back(Parent(path)); }
       ~ParentGuard() { stack.pop_back(); }
     } guard(parents, Native(origin));
-    for (const auto marker : {"R\"", "??", "%:", "__has_include", "__DATE__", "__TIME__", "__TIMESTAMP__"})
-      if (source.find(marker) != std::string::npos) return false;
-    std::string joined;
-    joined.reserve(source.size());
-    for (size_t i = 0; i < source.size(); i++) {
-      if (source[i] == '\\' && i + 1 < source.size()) {
-        if (source[i + 1] == '\n') {
-          ++i;
-          continue;
-        }
-        if (source[i + 1] == '\r' && i + 2 < source.size() && source[i + 2] == '\n') {
-          i += 2;
-          continue;
-        }
-      }
-      joined += source[i];
-    }
-    enum { normal, line_comment, block_comment, quoted_string, character } state = normal;
-    std::string text;
-    text.reserve(joined.size());
-    for (size_t i = 0; i < joined.size(); i++) {
-      const char ch = joined[i], next = i + 1 < joined.size() ? joined[i + 1] : 0;
-      if (state == normal && ch == '/' && (next == '/' || next == '*')) {
-        state = next == '/' ? line_comment : block_comment;
-        text += "  ";
-        ++i;
-      } else if (state == line_comment || state == block_comment) {
-        text += ch == '\n' ? '\n' : ' ';
-        if (state == line_comment && ch == '\n') state = normal;
-        else if (state == block_comment && ch == '*' && next == '/') {
-          text += ' ';
-          ++i;
-          state = normal;
-        }
-      } else {
-        text += ch;
-        if (state == normal && (ch == '"' || ch == '\'')) state = ch == '"' ? quoted_string : character;
-        else if (state != normal && ch == '\\' && next) {
-          text += next;
-          ++i;
-        } else if ((state == quoted_string && ch == '"') || (state == character && ch == '\'')) state = normal;
-      }
-    }
-    std::istringstream lines(text);
-    std::string        line;
-    while (std::getline(lines, line)) {
-      size_t p = line.find_first_not_of(" \t\r\f\v");
-      if (p == std::string::npos || line[p++] != '#') continue;
-      p = line.find_first_not_of(" \t\r\f\v", p);
-      if (p == std::string::npos) continue;
-      const size_t end       = line.find_first_not_of("abcdefghijklmnopqrstuvwxyz_", p);
-      const auto   directive = line.substr(p, end - p);
-      if (directive == "include_next" || directive == "import" || directive == "embed") return false;
-      if (directive != "include") continue;
-      p = line.find_first_not_of(" \t\r\f\v", end);
-      if (p == std::string::npos || (line[p] != '"' && line[p] != '<')) return false;
-      const bool   quoted = line[p] == '"';
-      const size_t close  = line.find(quoted ? '"' : '>', p + 1);
-      if (close == std::string::npos || close == p + 1 || line.find_first_not_of(" \t\r\f\v", close + 1) != std::string::npos) return false;
-      if (!Include(line.substr(p + 1, close - p - 1), quoted, origin, depth)) return false;
+    const auto parsed = identity.empty() ? ceed_cuda_cache::ParseIncludes(source, size) : ceed_cuda_cache::HeaderIncludes(source, size, identity);
+    if (!parsed.safe) return false;
+    for (const auto &include : parsed.entries) {
+      if (!Include(include.name, include.quoted, depth)) return false;
     }
     return true;
   }
@@ -358,7 +323,7 @@ std::string CeedCudaCacheKey(const std::string &code, const std::string &compile
                (!option.empty() && option[0] == '@'))
         return {};
     }
-    if (!dependencies.Scan(code, "", 0)) return {};
+    if (!dependencies.Scan(code.data(), code.size(), "", 0)) return {};
     return Hex(hash.Finish());
   } catch (...) {
     return {};
