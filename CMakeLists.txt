@@ -221,8 +221,11 @@ if(PROTECT_GPU_JIT)
     DEPENDS ceed-jit-pack ${_ceed_embedded_headers} "${PROJECT_BINARY_DIR}/generated/jit-files" VERBATIM)
   list(APPEND _ceed_sources interface/ceed-jit-source-embedded.cpp "${PROJECT_BINARY_DIR}/generated/ceed-jit-resources.h")
   list(APPEND _ceed_dependency_includes "${PROJECT_BINARY_DIR}/generated")
-  list(APPEND _ceed_libraries bcrypt)
-  string(APPEND _ceed_pc_private " -lbcrypt")
+  find_library(CEED_BCRYPT_LIBRARY NAMES bcrypt REQUIRED)
+  list(APPEND _ceed_libraries "${CEED_BCRYPT_LIBRARY}")
+  get_filename_component(_bcrypt_dir "${CEED_BCRYPT_LIBRARY}" DIRECTORY)
+  get_filename_component(_bcrypt_name "${CEED_BCRYPT_LIBRARY}" NAME_WE)
+  string(APPEND _ceed_pc_private " -L\"${_bcrypt_dir}\" -l${_bcrypt_name}")
 endif()
 
 # Build the library.

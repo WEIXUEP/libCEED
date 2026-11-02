@@ -2,16 +2,56 @@
 # Include this instead of the Makefile-based ExternalLibCEED.cmake.
 include(ExternalProject)
 
+# This module builds libCEED through its native CMake entry point.  The parent
+# project owns the feature switches; all dependency paths are forwarded as
+# CEED_* cache variables and therefore do not depend on a shell command line.
+
+if(NOT DEFINED CEED_CODE_PROTECTION)
+  set(CEED_CODE_PROTECTION OFF)
+  if(DEFINED PALACE_CODE_PROTECTION AND PALACE_CODE_PROTECTION)
+    set(CEED_CODE_PROTECTION ON)
+  endif()
+endif()
+
+if(NOT DEFINED CEED_WITH_LIBXSMM)
+  if(DEFINED PALACE_WITH_LIBXSMM)
+    set(CEED_WITH_LIBXSMM ${PALACE_WITH_LIBXSMM})
+  else()
+    set(CEED_WITH_LIBXSMM ON)
+  endif()
+endif()
+if(NOT DEFINED CEED_WITH_CUDA)
+  if(DEFINED PALACE_WITH_CUDA)
+    set(CEED_WITH_CUDA ${PALACE_WITH_CUDA})
+  else()
+    set(CEED_WITH_CUDA OFF)
+  endif()
+endif()
+if(NOT DEFINED CEED_WITH_MAGMA)
+  if(DEFINED PALACE_WITH_MAGMA)
+    set(CEED_WITH_MAGMA ${PALACE_WITH_MAGMA})
+  else()
+    set(CEED_WITH_MAGMA OFF)
+  endif()
+endif()
+if(NOT DEFINED CEED_WITH_OPENMP)
+  if(DEFINED PALACE_WITH_OPENMP)
+    set(CEED_WITH_OPENMP ${PALACE_WITH_OPENMP})
+  else()
+    set(CEED_WITH_OPENMP OFF)
+  endif()
+endif()
+
 if(PALACE_WITH_HIP)
   message(FATAL_ERROR "The native libCEED CMake entry point does not yet support HIP.")
 endif()
 
 # Dependencies must finish installing before libCEED configures.
 set(LIBCEED_DEPENDENCIES)
-if(PALACE_WITH_LIBXSMM)
+if(CEED_WITH_LIBXSMM)
   list(APPEND LIBCEED_DEPENDENCIES libxsmm)
 endif()
-if(PALACE_WITH_MAGMA)
+if(CEED_WITH_MAGMA)
   list(APPEND LIBCEED_DEPENDENCIES magma)
 endif()
 
@@ -19,21 +59,25 @@ set(LIBCEED_CMAKE_ARGS
   "-DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_INSTALL_PREFIX}"
   "-DBUILD_SHARED_LIBS:BOOL=OFF"
   "-DBUILD_TESTING:BOOL=OFF"
-  "-DCEED_XSMM_DIR:PATH=${CMAKE_INSTALL_PREFIX}"
-  "-DCEED_MAGMA_DIR:PATH=${CMAKE_INSTALL_PREFIX}"
+)
+if(NOT CEED_XSMM_DIR)
+  set(CEED_XSMM_DIR "${CMAKE_INSTALL_PREFIX}")
+endif()
+if(NOT CEED_MAGMA_DIR)
+  set(CEED_MAGMA_DIR "${CMAKE_INSTALL_PREFIX}")
+endif()
+list(APPEND LIBCEED_CMAKE_ARGS
+  "-DCEED_XSMM_DIR:PATH=${CEED_XSMM_DIR}"
+  "-DCEED_MAGMA_DIR:PATH=${CEED_MAGMA_DIR}"
 )
 foreach(_feature LIBXSMM CUDA MAGMA OPENMP)
   set(_enabled OFF)
-  if(PALACE_WITH_${_feature})
+  if(CEED_WITH_${_feature})
     set(_enabled ON)
   endif()
   list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_WITH_${_feature}:BOOL=${_enabled}")
 endforeach()
-set(_enabled OFF)
-if(PALACE_CODE_PROTECTION)
-  set(_enabled ON)
-endif()
-list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_CODE_PROTECTION:BOOL=${_enabled}")
+list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_CODE_PROTECTION:BOOL=${CEED_CODE_PROTECTION}")
 
 # Forward tool locations without adding shell quotes inside their cache values.
 foreach(_var CMAKE_TOOLCHAIN_FILE CMAKE_MAKE_PROGRAM CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_LINKER CMAKE_AR)
@@ -44,9 +88,14 @@ endforeach()
 
 # ExternalProject uses '|' to carry semicolon lists as a single cache argument.
 foreach(_var CMAKE_BUILD_TYPE CMAKE_PREFIX_PATH CMAKE_C_FLAGS CMAKE_CXX_FLAGS
-    CMAKE_EXE_LINKER_FLAGS CMAKE_STATIC_LINKER_FLAGS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR)
+    CMAKE_EXE_LINKER_FLAGS CMAKE_STATIC_LINKER_FLAGS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR
+    CMAKE_MSVC_RUNTIME_LIBRARY)
   if(DEFINED ${_var})
-    string(REPLACE ";" "|" _value "${${_var}}")
+    set(_value "${${_var}}")
+    if(_var STREQUAL "CMAKE_EXE_LINKER_FLAGS")
+      string(REGEX REPLACE "(^|[ ;])(-|/)openmp:llvm([ ;]|$)" "\\1\\3" _value "${_value}")
+    endif()
+    string(REPLACE ";" "|" _value "${_value}")
     list(APPEND LIBCEED_CMAKE_ARGS "-D${_var}:STRING=${_value}")
   endif()
 endforeach()
@@ -62,8 +111,10 @@ foreach(_var CMAKE_C_FLAGS_${_libceed_config} CMAKE_CXX_FLAGS_${_libceed_config}
   endif()
 endforeach()
 
-if(PALACE_WITH_CUDA)
-  if(CUDAToolkit_LIBRARY_ROOT)
+if(CEED_WITH_CUDA)
+  if(CEED_CUDA_DIR)
+    list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_CUDA_DIR:PATH=${CEED_CUDA_DIR}")
+  elseif(CUDAToolkit_LIBRARY_ROOT)
     list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_CUDA_DIR:PATH=${CUDAToolkit_LIBRARY_ROOT}")
   elseif(CUDAToolkit_ROOT)
     list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_CUDA_DIR:PATH=${CUDAToolkit_ROOT}")
@@ -81,8 +132,12 @@ if(PALACE_WITH_CUDA)
   endforeach()
 endif()
 
-if(BLAS_LAPACK_LIBRARIES)
+if(CEED_BLAS_LIB)
+  set(_blas "${CEED_BLAS_LIB}")
+elseif(BLAS_LAPACK_LIBRARIES)
   string(REPLACE "$<SEMICOLON>" ";" _blas "${BLAS_LAPACK_LIBRARIES}")
+endif()
+if(_blas)
   string(REPLACE ";" "|" _blas "${_blas}")
   list(APPEND LIBCEED_CMAKE_ARGS "-DCEED_BLAS_LIB:STRING=${_blas}")
 endif()
@@ -109,6 +164,9 @@ ExternalProject_Add(libCEED
   BINARY_DIR "${CMAKE_BINARY_DIR}/extern/libCEED-build"
   INSTALL_DIR "${CMAKE_INSTALL_PREFIX}"
   PREFIX "${CMAKE_BINARY_DIR}/extern/libCEED-cmake"
+  CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+  CMAKE_GENERATOR_PLATFORM "${CMAKE_GENERATOR_PLATFORM}"
+  CMAKE_GENERATOR_TOOLSET "${CMAKE_GENERATOR_TOOLSET}"
   LIST_SEPARATOR "|"
   CMAKE_ARGS ${LIBCEED_CMAKE_ARGS}
   UPDATE_COMMAND ""
