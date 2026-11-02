@@ -289,6 +289,12 @@ endif()
 
 # Generate package metadata and installation rules.
 include(CMakePackageConfigHelpers)
+set(_ceed_pc_libs "-L\"${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\" -lceed")
+if(PROTECT_GPU_JIT)
+  # Keep the Windows CNG dependency visible to pkg-config consumers. Some
+  # Windows pkg-config/CMake combinations omit Libs.private for try_compile.
+  string(APPEND _ceed_pc_libs " -L\"${_bcrypt_dir}\" -l${_bcrypt_name}")
+endif()
 set(_ceed_pc_cflags "")
 if(CEED_WITH_OPENMP)
   set(_ceed_pc_cflags "-openmp:llvm")

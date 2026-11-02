@@ -7,5 +7,5 @@ Name: CEED
 Description: Code for Efficient Extensible Discretization
 Version: @PROJECT_VERSION@
 Cflags: -I"${includedir}"
-Libs: -L"${libdir}" -lceed
+Libs: @_ceed_pc_libs@
 Libs.private:@_ceed_pc_private@
