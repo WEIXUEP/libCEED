@@ -172,7 +172,16 @@ if(CEED_WITH_OPENMP)
   if(NOT CEED_HAS_LLVM_OPENMP)
     message(FATAL_ERROR "The selected MSVC compiler does not support -openmp:llvm")
   endif()
-  find_library(CEED_OPENMP_LIBRARY NAMES libomp libomp140.x86_64 PATHS ENV LIB REQUIRED)
+  # MSVC's LLVM OpenMP autolink follows the CRT configuration. Never export a
+  # Release import library alongside Debug objects that autolink LIBOMPD.
+  # Separate cache entries also prevent a reconfigure from reusing the other CRT.
+  if(_ceed_build_type STREQUAL "debug")
+    find_library(CEED_OPENMP_LIBRARY_DEBUG NAMES libompd libomp140d.x86_64 PATHS ENV LIB REQUIRED)
+    set(CEED_OPENMP_LIBRARY "${CEED_OPENMP_LIBRARY_DEBUG}")
+  else()
+    find_library(CEED_OPENMP_LIBRARY_RELEASE NAMES libomp libomp140.x86_64 PATHS ENV LIB REQUIRED)
+    set(CEED_OPENMP_LIBRARY "${CEED_OPENMP_LIBRARY_RELEASE}")
+  endif()
   list(APPEND _ceed_libraries "${CEED_OPENMP_LIBRARY}")
   get_filename_component(_dir "${CEED_OPENMP_LIBRARY}" DIRECTORY)
   get_filename_component(_name "${CEED_OPENMP_LIBRARY}" NAME_WE)
