@@ -1050,6 +1050,12 @@ static inline int CeedOperatorLinearAssembleQFunctionCore_Cuda(CeedOperator op, 
     impl->qf_active_in  = active_inputs;
   }
 
+  // Operator application can overwrite the active input work vectors between assemblies.
+  // Reset every component before probing the QFunction with coordinate vectors.
+  for (CeedInt in = 0; in < num_active_in; in++) {
+    CeedCallBackend(CeedVectorSetValue(active_inputs[in], 0.0));
+  }
+
   // Count number of active output fields
   if (!num_active_out) {
     for (CeedInt i = 0; i < num_output_fields; i++) {

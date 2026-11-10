@@ -68,6 +68,7 @@ typedef struct {
   CeedMagmaFunction Weight;
   CeedInt           NB_interp[MAGMA_NONTENSOR_KERNEL_INSTANCES], NB_interp_t[MAGMA_NONTENSOR_KERNEL_INSTANCES];
   CeedInt           NB_deriv[MAGMA_NONTENSOR_KERNEL_INSTANCES], NB_deriv_t[MAGMA_NONTENSOR_KERNEL_INSTANCES];
+  int               shared_mem_limit;
   CeedScalar       *d_interp;
   CeedScalar       *d_grad;
   CeedScalar       *d_div;

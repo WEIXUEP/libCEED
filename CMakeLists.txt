@@ -342,7 +342,7 @@ if(BUILD_TESTING)
     add_test(NAME cuda-jit-cache-tests COMMAND cuda-jit-cache-tests unit "${PROJECT_BINARY_DIR}/cache-unit-tests")
   endif()
   # Focused, MSVC-compatible tests; the full Makefile suite includes C VLAs.
-  foreach(_test t000-ceed t001-ceed t010-config t011-code-protection)
+  foreach(_test t000-ceed t001-ceed t010-config t011-code-protection t366-basis t527-operator)
     add_executable(${_test} "tests/${_test}.c")
     target_link_libraries(${_test} PRIVATE ceed)
     set_property(TARGET ${_test} PROPERTY C_STANDARD 11)

@@ -319,6 +319,19 @@ static int CeedBasisApplyNonTensorCore_Magma(CeedBasis basis, bool apply_add, Ce
       Ceed        ceed_delegate;
       magma_int_t arch = magma_getdevice_arch();
 
+      // Cache the device limit before choosing between the tuned kernel and GEMM.
+      if (!impl->shared_mem_limit) {
+#ifdef CEED_MAGMA_USE_HIP
+        CeedCallHip(ceed, hipDeviceGetAttribute(&impl->shared_mem_limit, hipDeviceAttributeMaxSharedMemoryPerBlock, data->device_id));
+#else
+#if CUDA_VERSION >= 9000
+        CeedCallCuda(ceed, cuDeviceGetAttribute(&impl->shared_mem_limit, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN, data->device_id));
+#else
+        CeedCallCuda(ceed, cuDeviceGetAttribute(&impl->shared_mem_limit, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, data->device_id));
+#endif
+#endif
+      }
+
       // Tuning parameters for NB
       CeedCallBackend(CeedBasisGetFESpace(basis, &fe_space));
       CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &q_comp_interp));
@@ -393,7 +406,9 @@ static int CeedBasisApplyNonTensorCore_Magma(CeedBasis basis, bool apply_add, Ce
     CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, e_mode, &q_comp));
     M = (t_mode == CEED_TRANSPOSE) ? P : Q, K = (t_mode == CEED_TRANSPOSE) ? Q : P;
 
-    if (P <= MAGMA_NONTENSOR_CUSTOM_KERNEL_MAX_P && Q <= MAGMA_NONTENSOR_CUSTOM_KERNEL_MAX_Q) {
+    bool use_custom_kernel = P <= MAGMA_NONTENSOR_CUSTOM_KERNEL_MAX_P && Q <= MAGMA_NONTENSOR_CUSTOM_KERNEL_MAX_Q;
+
+    if (use_custom_kernel) {
       if (e_mode == CEED_EVAL_INTERP) {
         if (t_mode == CEED_TRANSPOSE) {
           Kernel = apply_add ? impl->InterpTransposeAdd[iN] : impl->InterpTranspose[iN];
@@ -418,8 +433,16 @@ static int CeedBasisApplyNonTensorCore_Magma(CeedBasis basis, bool apply_add, Ce
       CeedInt shared_mem   = (t_mode != CEED_TRANSPOSE && q_comp > 1) ? (shared_mem_A + shared_mem_B) : CeedIntMax(shared_mem_A, shared_mem_B);
       void   *args[]       = {&N, &d_b, &d_u, &d_v};
 
-      CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, Kernel, NULL, grid, M, num_t_col, 1, shared_mem, args));
-    } else {
+      // Small P and large Q can exceed shared memory even with only 128 threads.
+      // Keep the compiled thread geometry intact and use the existing GEMM path.
+      use_custom_kernel = shared_mem <= impl->shared_mem_limit;
+      if (use_custom_kernel) {
+        CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, Kernel, NULL, grid, M, num_t_col, 1, shared_mem, args));
+      } else {
+        CeedDebug(ceed, "MAGMA non-tensor basis: shared memory %d exceeds device limit %d; using GEMM\n", shared_mem, impl->shared_mem_limit);
+      }
+    }
+    if (!use_custom_kernel) {
       for (CeedInt d = 0; d < q_comp; d++) {
         if (t_mode == CEED_TRANSPOSE) {
           const CeedScalar beta = (apply_add || (d > 0)) ? 1.0 : 0.0;
