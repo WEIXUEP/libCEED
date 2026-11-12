@@ -24,8 +24,10 @@ CEED_EXTERN int CeedGetJitAbsolutePath(Ceed ceed, const char *relative_file_path
 /**
   @brief Runtime JiT source root override
 
-  Set `CEED_JIT_SOURCE_ROOT` to one or more JiT source roots. Multiple roots are
-  separated by `;` on Windows and `:` on Unix-like systems. Each root is tried
-  after the compiled-in roots. This variable is used only when JiT source files
-  are enabled; embedded or protected builds continue to use their protected path.
+  Set `CEED_JIT_SOURCE_ROOT` to one or more JiT source roots. Existing FEM
+  applications may use `FEM_JIT_SOURCE_DIR` as a compatibility alias. Multiple
+  roots are separated by `;` on Windows and `:` on Unix-like systems. Each root
+  is tried after the compiled-in roots, in the order specified. These variables
+  are used only when JiT source files are enabled; embedded or protected builds
+  continue to use their protected path.
 **/

@@ -35,6 +35,39 @@ static size_t num_backends;
 #define CEED_FTABLE_ENTRY(class, method) {#class #method, offsetof(struct class##_private, method)}
 /// @endcond
 
+static int CeedAddJitSourceRootsFromEnvironment(Ceed ceed, const char *variable_name, const char *value) {
+  char *roots = NULL;
+#if defined(_WIN32)
+  const char path_delimiter = ';';
+#else
+  const char path_delimiter = ':';
+#endif
+
+  CeedCall(CeedStringAllocCopy(value, &roots));
+  char *root = roots;
+  while (root) {
+    char *next = strchr(root, path_delimiter);
+    if (next) *next++ = '\0';
+    if (root[0]) {
+      size_t root_length = strlen(root);
+      char  *normalized_root;
+
+      CeedCall(CeedCalloc(root_length + 2, &normalized_root));
+      memcpy(normalized_root, root, root_length);
+      for (char *path = normalized_root; *path; path++) {
+        if (*path == '\\') *path = '/';
+      }
+      if (normalized_root[root_length - 1] != '/') normalized_root[root_length++] = '/';
+      CeedCall(CeedAddJitSourceRoot(ceed, normalized_root));
+      CeedCall(CeedFree(&normalized_root));
+    }
+    root = next;
+  }
+  CeedCall(CeedFree(&roots));
+  CeedDebug(ceed, "%s=%s\n", variable_name, value);
+  return CEED_ERROR_SUCCESS;
+}
+
 /// @file
 /// Implementation of core components of Ceed library
 
@@ -1400,37 +1433,15 @@ int CeedInit(const char *resource, Ceed *ceed) {
 #endif
 #if !defined(CEED_EMBEDDED_JIT) && !(defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE)
   // Allow an installed or relocated build to provide JiT sources at runtime.
-  // Multiple roots are separated by the platform path-list delimiter.
+  // Multiple roots are separated by the platform path-list delimiter. FEM_JIT_SOURCE_DIR
+  // is retained as a compatibility alias used by existing FEM applications.
   const char *ceed_jit_source_root_env = getenv("CEED_JIT_SOURCE_ROOT");
   if (ceed_jit_source_root_env && ceed_jit_source_root_env[0]) {
-    CeedDebug(*ceed, "CEED_JIT_SOURCE_ROOT=%s\n", ceed_jit_source_root_env);
-    char *roots = NULL;
-    CeedCall(CeedStringAllocCopy(ceed_jit_source_root_env, &roots));
-#if defined(_WIN32)
-    const char path_delimiter = ';';
-#else
-    const char path_delimiter = ':';
-#endif
-    char *root = roots;
-    while (root) {
-      char *next = strchr(root, path_delimiter);
-      if (next) *next++ = '\0';
-      if (root[0]) {
-        size_t root_length = strlen(root);
-        char  *normalized_root;
-
-        CeedCall(CeedCalloc(root_length + 2, &normalized_root));
-        memcpy(normalized_root, root, root_length);
-        for (char *path = normalized_root; *path; path++) {
-          if (*path == '\\') *path = '/';
-        }
-        if (normalized_root[root_length - 1] != '/') normalized_root[root_length++] = '/';
-        CeedCall(CeedAddJitSourceRoot(*ceed, normalized_root));
-        CeedCall(CeedFree(&normalized_root));
-      }
-      root = next;
-    }
-    CeedCall(CeedFree(&roots));
+    CeedCall(CeedAddJitSourceRootsFromEnvironment(*ceed, "CEED_JIT_SOURCE_ROOT", ceed_jit_source_root_env));
+  }
+  const char *fem_jit_source_dir_env = getenv("FEM_JIT_SOURCE_DIR");
+  if (fem_jit_source_dir_env && fem_jit_source_dir_env[0]) {
+    CeedCall(CeedAddJitSourceRootsFromEnvironment(*ceed, "FEM_JIT_SOURCE_DIR", fem_jit_source_dir_env));
   }
 #endif
 
