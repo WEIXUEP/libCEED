@@ -412,6 +412,11 @@ int CeedPathConcatenate(Ceed ceed, const char *base_file_path, const char *relat
   CeedCall(CeedCalloc(new_file_path_length, new_file_path));
   memcpy(*new_file_path, base_file_path, base_length);
   memcpy(&((*new_file_path)[base_length]), relative_file_path, relative_length);
+  // Generated source names can use Windows separators even though Ceed source roots
+  // and include paths use forward slashes internally.
+  for (char *path = &(*new_file_path)[base_length]; *path; path++) {
+    if (*path == '\\') *path = '/';
+  }
   return CEED_ERROR_SUCCESS;
 }
 
@@ -450,6 +455,8 @@ int CeedGetJitRelativePath(const char *absolute_file_path, const char **relative
 int CeedGetJitAbsolutePath(Ceed ceed, const char *relative_file_path, const char **absolute_file_path) {
   const char **jit_source_dirs;
   CeedInt      num_source_dirs;
+  char         searched_paths[CEED_MAX_RESOURCE_LEN] = "";
+  size_t       searched_length                       = 0;
 
 #ifdef CEED_EMBEDDED_JIT
   bool embedded;
@@ -478,6 +485,15 @@ int CeedGetJitAbsolutePath(Ceed ceed, const char *relative_file_path, const char
     CeedCall(CeedPathConcatenate(ceed, jit_source_dirs[i], relative_file_path, (char **)absolute_file_path));
     CeedCall(CeedCheckFilePath(ceed, *absolute_file_path, &is_valid));
 
+    if (searched_length < sizeof(searched_paths) - 1) {
+      int written = snprintf(&searched_paths[searched_length], sizeof(searched_paths) - searched_length, "%s%s",
+                             searched_length ? "\n  " : "  ", *absolute_file_path);
+      if (written > 0) {
+        size_t available = sizeof(searched_paths) - searched_length - 1;
+        searched_length += (size_t)written < available ? (size_t)written : available;
+      }
+    }
+
     if (is_valid) {
       CeedCallBackend(CeedRestoreJitSourceRoots(ceed, &jit_source_dirs));
       return CEED_ERROR_SUCCESS;
@@ -488,6 +504,7 @@ int CeedGetJitAbsolutePath(Ceed ceed, const char *relative_file_path, const char
     // LCOV_EXCL_STOP
   }
   // LCOV_EXCL_START
-  return CeedError(ceed, CEED_ERROR_MAJOR, "Couldn't find matching JiT source file: %s", relative_file_path);
+  return CeedError(ceed, CEED_ERROR_MAJOR, "Couldn't find matching JiT source file: %s\nSearched JiT paths:\n%s", relative_file_path,
+                   searched_paths[0] ? searched_paths : "  <none>");
   // LCOV_EXCL_STOP
 }

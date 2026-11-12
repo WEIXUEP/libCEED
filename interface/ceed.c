@@ -1398,6 +1398,41 @@ int CeedInit(const char *resource, Ceed *ceed) {
 #ifdef CEED_JIT_SOURCE_ROOT_BUILD
   CeedCall(CeedAddJitSourceRoot(*ceed, CEED_JIT_SOURCE_ROOT_BUILD));
 #endif
+#if !defined(CEED_EMBEDDED_JIT) && !(defined(CEED_DISABLE_JIT_SOURCE) && CEED_DISABLE_JIT_SOURCE)
+  // Allow an installed or relocated build to provide JiT sources at runtime.
+  // Multiple roots are separated by the platform path-list delimiter.
+  const char *ceed_jit_source_root_env = getenv("CEED_JIT_SOURCE_ROOT");
+  if (ceed_jit_source_root_env && ceed_jit_source_root_env[0]) {
+    CeedDebug(*ceed, "CEED_JIT_SOURCE_ROOT=%s\n", ceed_jit_source_root_env);
+    char *roots = NULL;
+    CeedCall(CeedStringAllocCopy(ceed_jit_source_root_env, &roots));
+#if defined(_WIN32)
+    const char path_delimiter = ';';
+#else
+    const char path_delimiter = ':';
+#endif
+    char *root = roots;
+    while (root) {
+      char *next = strchr(root, path_delimiter);
+      if (next) *next++ = '\0';
+      if (root[0]) {
+        size_t root_length = strlen(root);
+        char  *normalized_root;
+
+        CeedCall(CeedCalloc(root_length + 2, &normalized_root));
+        memcpy(normalized_root, root, root_length);
+        for (char *path = normalized_root; *path; path++) {
+          if (*path == '\\') *path = '/';
+        }
+        if (normalized_root[root_length - 1] != '/') normalized_root[root_length++] = '/';
+        CeedCall(CeedAddJitSourceRoot(*ceed, normalized_root));
+        CeedCall(CeedFree(&normalized_root));
+      }
+      root = next;
+    }
+    CeedCall(CeedFree(&roots));
+  }
+#endif
 
   // By default, make CUDA compile without Clang, use nvrtc instead
   // Note that this is overridden if a Rust file is included (Rust requires Clang)

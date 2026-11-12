@@ -20,3 +20,12 @@ CEED_EXTERN int CeedLoadSourceToInitializedBuffer(Ceed ceed, const char *source_
 CEED_EXTERN int CeedPathConcatenate(Ceed ceed, const char *base_file_path, const char *relative_file_path, char **new_file_path);
 CEED_EXTERN int CeedGetJitRelativePath(const char *absolute_file_path, const char **relative_file_path);
 CEED_EXTERN int CeedGetJitAbsolutePath(Ceed ceed, const char *relative_file_path, const char **absolute_file_path);
+
+/**
+  @brief Runtime JiT source root override
+
+  Set `CEED_JIT_SOURCE_ROOT` to one or more JiT source roots. Multiple roots are
+  separated by `;` on Windows and `:` on Unix-like systems. Each root is tried
+  after the compiled-in roots. This variable is used only when JiT source files
+  are enabled; embedded or protected builds continue to use their protected path.
+**/
